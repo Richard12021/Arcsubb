@@ -905,106 +905,90 @@ function showWalletError(msg) {
 }
 
 // ══════════════════════════════════════════════
-// ON-CHAIN USDC BALANCE — via ArcScan Explorer
+// ON-CHAIN USDC BALANCE
 //
-// On Arc, USDC is the native gas token.
-// The native balance (Wei, 18 decimals) equals
-// the USDC balance shown in the wallet.
+// Arc's native token IS USDC (18 decimals at
+// the EVM level). We read it with eth_getBalance
+// routed through the wallet extension — this is
+// the ONLY approach that works from a local HTML
+// file because browser fetch() is blocked by
+// CORS on all external RPC/API endpoints.
 //
-// We query 3 sources in order, using the first
-// that succeeds:
+// Flow:
+//  1. Ask wallet which chain it's on (eth_chainId)
+//  2. If NOT Arc (0x4CFCE2 = 5042002), switch chain
+//  3. Call eth_getBalance via wallet provider
+//  4. Result is hex Wei → divide by 1e18 = USDC
 //
-//  1. ArcScan Blockscout API v2  (most accurate)
-//     GET /api/v2/addresses/{addr}
-//     → response.coin_balance  (raw Wei string)
-//
-//  2. ArcScan Blockscout API v1  (classic fallback)
-//     GET /api?module=account&action=eth_get_balance
-//     → response.result  (raw Wei string)
-//
-//  3. Arc JSON-RPC eth_getBalance  (final fallback)
-//     POST rpc.testnet.arc.network
-//     → result  (hex Wei string)
-//
-// All three return the same native balance.
-// Divide by 1e18 to get USDC.
+// ArcScan link for manual verification:
+//   https://testnet.arcscan.app/address/{addr}
 // ══════════════════════════════════════════════
 const USDC_CONTRACT = '0x3600000000000000000000000000000000000000'
-const ARC_RPC       = 'https://rpc.testnet.arc.network'
-const ARCSCAN_API   = 'https://testnet.arcscan.app/api'
+const ARC_CHAIN_ID  = '0x4CFCE2'   // 5042002 in hex
 
 async function fetchUsdcBalance() {
-  if (!STATE.address) return
+  if (!STATE.address || !STATE.provider) return
 
-  const addr = STATE.address
+  const addr     = STATE.address
+  const provider = STATE.provider
 
-  // ── Source 1: ArcScan Blockscout v2 API ──────────────────────────────
   try {
-    const resp = await fetch(
-      `https://testnet.arcscan.app/api/v2/addresses/${addr}`,
-      { headers: { 'Accept': 'application/json' } }
-    )
-    if (resp.ok) {
-      const data = await resp.json()
-      // coin_balance is the native balance string in Wei (18 decimals)
-      if (data && data.coin_balance !== undefined && data.coin_balance !== null) {
-        const wei     = BigInt(data.coin_balance)
-        const balance = Number(wei) / 1e18
-        setBalance(balance)
-        return balance
+    // ── Step 1: Make sure wallet is on Arc chain ──────────────────────
+    let chainId = null
+    try {
+      chainId = await provider.request({ method: 'eth_chainId' })
+    } catch(e) { /* ignore — some providers don't support this before connect */ }
+
+    if (chainId && chainId.toLowerCase() !== ARC_CHAIN_ID.toLowerCase()) {
+      // Switch silently — don't prompt for chain switch here, just try
+      try {
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: ARC_CHAIN_ID }],
+        })
+      } catch (switchErr) {
+        if (switchErr.code === 4902) {
+          // Chain not added — add Arc Testnet then switch
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId:           ARC_CHAIN_ID,
+              chainName:         'Arc Testnet',
+              nativeCurrency:    { name: 'USD Coin', symbol: 'USDC', decimals: 18 },
+              rpcUrls:           ['https://rpc.testnet.arc.network'],
+              blockExplorerUrls: ['https://testnet.arcscan.app'],
+            }],
+          })
+        }
+        // If user rejects switch, we still try eth_getBalance
+        // (wallet may already be on Arc even if chainId read differently)
       }
     }
-  } catch (e) {
-    console.warn('[balance] ArcScan v2 failed:', e.message)
-  }
 
-  // ── Source 2: ArcScan Blockscout v1 API ──────────────────────────────
-  try {
-    const resp = await fetch(
-      `${ARCSCAN_API}?module=account&action=eth_get_balance&address=${addr}&tag=latest`,
-      { headers: { 'Accept': 'application/json' } }
-    )
-    if (resp.ok) {
-      const data = await resp.json()
-      // result is the Wei balance as a decimal string when status === "1"
-      if (data && data.status === '1' && data.result) {
-        const wei     = BigInt(data.result)
-        const balance = Number(wei) / 1e18
-        setBalance(balance)
-        return balance
-      }
-    }
-  } catch (e) {
-    console.warn('[balance] ArcScan v1 failed:', e.message)
-  }
-
-  // ── Source 3: Arc JSON-RPC eth_getBalance ─────────────────────────────
-  try {
-    const resp = await fetch(ARC_RPC, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method:  'eth_getBalance',
-        params:  [addr, 'latest'],
-      }),
+    // ── Step 2: Read native balance through wallet extension ─────────
+    // eth_getBalance always goes through the wallet's active RPC.
+    // After switching to Arc above, this hits Arc's RPC directly.
+    const hexBalance = await provider.request({
+      method: 'eth_getBalance',
+      params: [addr, 'latest'],
     })
-    if (resp.ok) {
-      const data = await resp.json()
-      // result is a hex string e.g. "0x8ac7230489e80000"
-      if (data && data.result && data.result !== '0x0' && data.result !== '0x') {
-        const wei     = BigInt(data.result)
-        const balance = Number(wei) / 1e18
-        setBalance(balance)
-        return balance
-      }
-    }
-  } catch (e) {
-    console.warn('[balance] Arc RPC eth_getBalance failed:', e.message)
-  }
 
-  // ── All sources failed — keep last-known balance ──────────────────────
-  console.error('[balance] All sources failed for', addr)
+    // hexBalance is a hex string: e.g. "0x8ac7230489e80000"
+    // Arc native USDC = 18 decimals, same as Wei
+    if (!hexBalance || hexBalance === '0x' || hexBalance === '0x0') {
+      setBalance(0)
+      return 0
+    }
+
+    const wei     = BigInt(hexBalance)
+    const balance = Number(wei) / 1e18
+    setBalance(balance)
+    return balance
+
+  } catch (err) {
+    console.error('[balance] eth_getBalance failed:', err.message)
+    // Don't reset balance on error — keep last known value
+  }
 }
 
 function setBalance(balance) {
@@ -1032,7 +1016,7 @@ function updateWalletUI() {
     area.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;position:relative" id="wallet-connected-area">
         <div class="balance-pill" id="balance-pill">
-          ${walletIcon} <span id="balance-display">${STATE.balance.toFixed(2)} USDC</span>
+          ${walletIcon} <span id="balance-display">Fetching…</span>
         </div>
         <button class="wallet-btn-addr" onclick="toggleDisconnectDrop(event)">
           <span class="wallet-dot"></span>
@@ -1041,11 +1025,12 @@ function updateWalletUI() {
         </button>
       </div>`
 
-    // Sidebar wallet info
+    // Set sidebar addresses
     document.getElementById('sidebar-addr').textContent = shortAddr(STATE.address)
-    document.getElementById('sidebar-balance').textContent = STATE.balance.toFixed(2) + ' USDC'
     document.getElementById('user-sidebar-addr').textContent = shortAddr(STATE.address)
-    document.getElementById('user-sidebar-balance').textContent = STATE.balance.toFixed(2) + ' USDC'
+    // Balance displays will be updated by updateBalanceDisplays() once fetched
+    document.getElementById('sidebar-balance').textContent = 'Fetching…'
+    document.getElementById('user-sidebar-balance').textContent = 'Fetching…'
   } else {
     area.innerHTML = `<button class="wallet-btn-connect" onclick="openWalletModal()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12V22H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/></svg>
@@ -1075,7 +1060,7 @@ function toggleDisconnectDrop(e) {
     </div>
     <div style="padding:11px 16px;border-bottom:1px solid var(--border);font-family:var(--font-m);font-size:12px;display:flex;justify-content:space-between">
       <span style="color:var(--text-2)">USDC Balance</span>
-      <span style="color:var(--cyan)" id="drop-balance">${STATE.balance.toFixed(2)} USDC</span>
+      <span style="color:var(--cyan)" id="drop-balance">Fetching…</span>
     </div>
     <div class="drop-item" onclick="window.open('https://testnet.arcscan.app/address/${STATE.address}','_blank');event.stopPropagation()">View on ArcScan <span style="color:var(--cyan);opacity:.7">↗</span></div>
     <div class="drop-item danger" onclick="disconnectWallet();event.stopPropagation()">Disconnect <span>⏻</span></div>`
@@ -1162,29 +1147,27 @@ function nextPaymentLabel(interval) {
 }
 
 function deductBalance(amount, label) {
-  // Optimistic deduction — immediately reflect in UI
-  STATE.balance = Math.max(0, STATE.balance - amount)
+  // Optimistic deduction — immediately reflect in UI while tx confirms
+  const current = (STATE.balance !== null && !isNaN(STATE.balance)) ? STATE.balance : 0
+  STATE.balance = Math.max(0, current - amount)
   flashBalance('down')
   updateBalanceDisplays()
   const fakeTx = '0x' + Math.random().toString(16).slice(2,10) + '…'
   toast('Payment Confirmed', `${label} · -${amount.toFixed(2)} USDC · tx: ${fakeTx}`, '✅')
-  // Then re-fetch real on-chain balance after a short delay (tx needs to land)
-  setTimeout(() => {
-    fetchUsdcBalance().then(() => updateBalanceDisplays())
-  }, 3000)
+  // Re-fetch real on-chain balance after tx confirms on Arc (~1-2s)
+  setTimeout(() => fetchUsdcBalance(), 3000)
+}
+
+function fmtBalance(n) {
+  if (n === undefined || n === null || isNaN(n)) return 'Fetching…'
+  // Match ArcScan precision: 4 dp up to 1000, 2 dp above
+  const dp = n < 1 ? 6 : n < 1000 ? 4 : 2
+  return n.toFixed(dp) + ' USDC'
 }
 
 function updateBalanceDisplays() {
-  // Show 4 decimal places — matches ArcScan explorer display precision
-  const fmt = (n) => {
-    if (n === undefined || n === null || isNaN(n)) return '… USDC'
-    // Use 4 dp for small amounts, 2 dp for large
-    const dp = n < 1 ? 6 : n < 1000 ? 4 : 2
-    return n.toFixed(dp) + ' USDC'
-  }
-  const v = fmt(STATE.balance)
-  const ids = ['balance-display','sidebar-balance','user-sidebar-balance','drop-balance']
-  ids.forEach(id => {
+  const v = fmtBalance(STATE.balance)
+  ;['balance-display', 'sidebar-balance', 'user-sidebar-balance', 'drop-balance'].forEach(id => {
     const el = document.getElementById(id)
     if (el) el.textContent = v
   })
@@ -1763,7 +1746,7 @@ function renderDSubs() {
     <div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">
       ${statCard('Active Plans',String(active.length),'','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')}
       ${statCard('Monthly Spend','$'+spend.toFixed(2),'','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')}
-      ${statCard('USDC Balance','$'+STATE.balance.toFixed(2),'Live balance','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')}
+      ${statCard('USDC Balance', fmtBalance(STATE.balance), 'Live · updates every 10s','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')}
     </div>
     <div style="display:flex;flex-direction:column;gap:16px">
     ${USER_SUBS.map(sub => {
