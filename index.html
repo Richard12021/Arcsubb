@@ -831,14 +831,14 @@ async function connectWallet(type) {
     } catch(e) { /* provider may not support eth_chainId before full connect */ }
 
     const alreadyOnArc = currentChain &&
-      currentChain.toLowerCase() === '0x4cfce2'
+      currentChain.toLowerCase() === '0x4cef52'
 
     if (!alreadyOnArc) {
       // User is on a different network — ask wallet to switch to Arc
       try {
         await provider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x4CFCE2' }],
+          params: [{ chainId: '0x4CEF52' }],
         })
         // Switch succeeded — Arc was already in wallet's network list
       } catch (switchErr) {
@@ -849,7 +849,7 @@ async function connectWallet(type) {
             await provider.request({
               method: 'wallet_addEthereumChain',
               params: [{
-                chainId:           '0x4CFCE2',
+                chainId:           '0x4CEF52',
                 chainName:         'Arc Testnet',
                 nativeCurrency:    { name: 'USD Coin', symbol: 'USDC', decimals: 18 },
                 rpcUrls:           ['https://rpc.testnet.arc.network'],
@@ -938,7 +938,7 @@ function showWalletError(msg) {
 //
 // Flow:
 //  1. Ask wallet which chain it's on (eth_chainId)
-//  2. If NOT Arc (0x4CFCE2 = 5042002), switch chain
+//  2. If NOT Arc (0x4CEF52 = 5042002), switch chain
 //  3. Call eth_getBalance via wallet provider
 //  4. Result is hex Wei → divide by 1e18 = USDC
 //
@@ -946,40 +946,62 @@ function showWalletError(msg) {
 //   https://testnet.arcscan.app/address/{addr}
 // ══════════════════════════════════════════════
 const USDC_CONTRACT = '0x3600000000000000000000000000000000000000'
-const ARC_CHAIN_ID  = '0x4CFCE2'   // 5042002 in hex
+const ARC_CHAIN_ID  = '0x4CEF52'  // 5042002 decimal
 
 async function fetchUsdcBalance() {
-  if (!STATE.address || !STATE.provider) return
+  if (!STATE.address) return
 
-  const addr     = STATE.address
-  const provider = STATE.provider
+  const addr = STATE.address
 
+  // ── Strategy A: Direct JSON-RPC to Arc's own endpoint ─────────────────
+  // Arc's RPC returns Access-Control-Allow-Origin: * so fetch() works fine.
+  // This is authoritative — same data ArcScan shows.
+  // Arc native token = USDC, 18 decimals. eth_getBalance returns Wei.
   try {
-    // Read native balance via wallet provider (eth_getBalance).
-    // Chain management is handled only in connectWallet() — never here.
-    // We call eth_getBalance with the wallet's current chain; if the wallet
-    // is on Arc this returns the correct USDC balance (Arc native = 18 dec).
-    // We always pass the address explicitly so the wallet hits Arc's RPC.
-    const hexBalance = await provider.request({
-      method: 'eth_getBalance',
-      params: [addr, 'latest'],
+    const resp = await fetch('https://rpc.testnet.arc.network', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        jsonrpc: '2.0',
+        id:      1,
+        method:  'eth_getBalance',
+        params:  [addr, 'latest'],
+      }),
     })
-
-    if (!hexBalance || hexBalance === '0x' || hexBalance === '0x0') {
-      setBalance(0)
-      return 0
+    const json = await resp.json()
+    if (json.result && json.result !== '0x' && json.result !== '0x0') {
+      const wei     = BigInt(json.result)
+      const balance = Number(wei) / 1e18
+      setBalance(balance)
+      console.log('[balance] Arc RPC →', balance, 'USDC')
+      return balance
     }
-
-    // Arc native USDC: 18 decimals — same as Wei on Ethereum
-    const wei     = BigInt(hexBalance)
-    const balance = Number(wei) / 1e18
-    setBalance(balance)
-    return balance
-
-  } catch (err) {
-    console.error('[balance] eth_getBalance failed:', err.message)
-    // Keep last-known balance on transient errors — don't reset to 0
+  } catch (e) {
+    console.warn('[balance] Arc RPC fetch failed:', e.message)
   }
+
+  // ── Strategy B: Wallet provider eth_getBalance (fallback) ─────────────
+  // Only used if direct fetch fails (e.g. network down).
+  // Only accurate when wallet is already switched to Arc chain.
+  if (STATE.provider) {
+    try {
+      const hex = await STATE.provider.request({
+        method: 'eth_getBalance',
+        params: [addr, 'latest'],
+      })
+      if (hex && hex !== '0x' && hex !== '0x0') {
+        const wei     = BigInt(hex)
+        const balance = Number(wei) / 1e18
+        setBalance(balance)
+        console.log('[balance] wallet provider →', balance, 'USDC')
+        return balance
+      }
+    } catch (e) {
+      console.warn('[balance] wallet provider fallback failed:', e.message)
+    }
+  }
+
+  console.error('[balance] both sources failed for', addr)
 }
 
 function setBalance(balance) {
