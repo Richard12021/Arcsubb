@@ -648,12 +648,13 @@ const STATE = {
 
 // Demo plans
 const PLANS = [
-  {id:1,name:'Premium Newsletter',desc:'Weekly deep-dives into DeFi, AI, and macro finance. Curated by ex-Goldman analysts.',price:10,interval:'Monthly',token:'USDC',trial:0,max:500,subs:142,color:'#38c8f0',merchant:'0xA1b2C3D4e5F6A7B8C9D0e1F2A3b4C5D6e7F8A9b0'},
-  {id:2,name:'SaaS Builder Pro',desc:'Full access to our analytics platform, API integrations, and 24/7 support.',price:25,interval:'Monthly',token:'USDC',trial:7,max:0,subs:67,color:'#f0b840',merchant:'0xB2C3D4E5f6A7B8c9D0E1F2a3B4c5D6E7f8A9B0c1'},
+  // Sorted lowest → highest price (Basic → Advanced)
   {id:3,name:'Membership Pass',desc:'Join our exclusive creator community. Access gated content, weekly AMAs, and Discord perks.',price:5,interval:'Weekly',token:'USDC',trial:0,max:1000,subs:289,color:'#3cf0a0',merchant:'0xC3D4E5F6A7b8C9d0E1f2A3B4C5d6E7F8a9B0C1d2'},
-  {id:4,name:'Research Vault',desc:'Annual subscription to institutional-grade onchain research.',price:199,interval:'Annually',token:'USDC',trial:14,max:200,subs:38,color:'#9b7ff0',merchant:'0xD4E5F6A7B8C9d0E1F2A3b4C5D6e7F8A9B0C1d2e3'},
+  {id:1,name:'Premium Newsletter',desc:'Weekly deep-dives into DeFi, AI, and macro finance. Curated by ex-Goldman analysts.',price:10,interval:'Monthly',token:'USDC',trial:0,max:500,subs:142,color:'#38c8f0',merchant:'0xA1b2C3D4e5F6A7B8C9D0e1F2A3b4C5D6e7F8A9b0'},
   {id:5,name:'Yield Signals',desc:'Real-time USDC yield opportunities across DeFi. Automated alerts, backtested strategies.',price:15,interval:'Monthly',token:'EURC',trial:0,max:0,subs:91,color:'#f05060',merchant:'0xE5F6A7B8C9D0e1F2a3B4c5D6E7f8A9b0C1D2e3f4'},
+  {id:2,name:'SaaS Builder Pro',desc:'Full access to our analytics platform, API integrations, and 24/7 support.',price:25,interval:'Monthly',token:'USDC',trial:7,max:0,subs:67,color:'#f0b840',merchant:'0xB2C3D4E5f6A7B8c9D0E1F2a3B4c5D6E7f8A9B0c1'},
   {id:6,name:'Web3 Bootcamp',desc:'8-week structured course on building DeFi apps on Arc.',price:149,interval:'Annually',token:'USDC',trial:3,max:50,subs:44,color:'#38c8f0',merchant:'0xF6A7B8C9D0E1f2A3b4C5d6E7F8a9B0c1D2E3f4a5'},
+  {id:4,name:'Research Vault',desc:'Annual subscription to institutional-grade onchain research.',price:199,interval:'Annually',token:'USDC',trial:14,max:200,subs:38,color:'#9b7ff0',merchant:'0xD4E5F6A7B8C9d0E1F2A3b4C5D6e7F8A9B0C1d2e3'},
 ]
 
 // Demo subscriptions
@@ -953,36 +954,10 @@ async function fetchUsdcBalance() {
 
   const addr = STATE.address
 
-  // ── Strategy A: Direct JSON-RPC to Arc's own endpoint ─────────────────
-  // Arc's RPC returns Access-Control-Allow-Origin: * so fetch() works fine.
-  // This is authoritative — same data ArcScan shows.
-  // Arc native token = USDC, 18 decimals. eth_getBalance returns Wei.
-  try {
-    const resp = await fetch('https://rpc.testnet.arc.network', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        jsonrpc: '2.0',
-        id:      1,
-        method:  'eth_getBalance',
-        params:  [addr, 'latest'],
-      }),
-    })
-    const json = await resp.json()
-    if (json.result && json.result !== '0x' && json.result !== '0x0') {
-      const wei     = BigInt(json.result)
-      const balance = Number(wei) / 1e18
-      setBalance(balance)
-      console.log('[balance] Arc RPC →', balance, 'USDC')
-      return balance
-    }
-  } catch (e) {
-    console.warn('[balance] Arc RPC fetch failed:', e.message)
-  }
-
-  // ── Strategy B: Wallet provider eth_getBalance (fallback) ─────────────
-  // Only used if direct fetch fails (e.g. network down).
-  // Only accurate when wallet is already switched to Arc chain.
+  // ── Strategy A: wallet provider eth_getBalance ────────────────────────
+  // Goes through the wallet extension — zero CORS issues from file://.
+  // Wallet must be on Arc for this to return the correct balance.
+  // This is the reliable path; wallet was switched to Arc on connect.
   if (STATE.provider) {
     try {
       const hex = await STATE.provider.request({
@@ -993,15 +968,55 @@ async function fetchUsdcBalance() {
         const wei     = BigInt(hex)
         const balance = Number(wei) / 1e18
         setBalance(balance)
-        console.log('[balance] wallet provider →', balance, 'USDC')
+        console.log('[balance] wallet →', balance.toFixed(4), 'USDC')
         return balance
       }
     } catch (e) {
-      console.warn('[balance] wallet provider fallback failed:', e.message)
+      console.warn('[balance] wallet eth_getBalance failed:', e.message)
     }
   }
 
-  console.error('[balance] both sources failed for', addr)
+  // ── Strategy B: direct fetch to Arc RPC (fallback) ────────────────────
+  // Works when page is served from http:// (CORS allowed on Arc RPC).
+  // May be blocked from file:// in some browsers — hence fallback only.
+  try {
+    const resp = await fetch('https://rpc.testnet.arc.network', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method:  'eth_getBalance',
+        params:  [addr, 'latest'],
+      }),
+    })
+    const json = await resp.json()
+    if (json.result && json.result !== '0x' && json.result !== '0x0') {
+      const wei     = BigInt(json.result)
+      const balance = Number(wei) / 1e18
+      setBalance(balance)
+      console.log('[balance] Arc RPC →', balance.toFixed(4), 'USDC')
+      return balance
+    }
+  } catch (e) {
+    console.warn('[balance] Arc RPC fetch failed:', e.message)
+  }
+
+  console.error('[balance] all sources failed for', addr)
+}
+
+// Re-fetch balance up to `retries` times until it changes from `prevBalance`.
+// Used after a transaction to confirm the on-chain deduction landed.
+async function fetchUsdcBalanceUntilChanged(prevBalance, retries = 15, delayMs = 1000) {
+  for (let i = 0; i < retries; i++) {
+    await new Promise(r => setTimeout(r, delayMs))
+    const fresh = await fetchUsdcBalance()
+    if (fresh !== undefined && fresh !== prevBalance) {
+      console.log('[balance] changed:', prevBalance, '→', fresh)
+      return fresh
+    }
+  }
+  // Last resort: just show whatever the latest read returned
+  await fetchUsdcBalance()
 }
 
 function setBalance(balance) {
@@ -1125,37 +1140,52 @@ function encodeUint256(value) {
   return hex.padStart(64, '0')
 }
 
-// Poll eth_getTransactionReceipt on Arc's RPC until mined.
-// Uses direct fetch() to Arc RPC — not the wallet provider —
-// so receipt polling always hits Arc regardless of wallet chain.
-// Arc has sub-second finality so usually confirmed on first poll.
-async function waitForReceipt(txHash, maxAttempts = 40, intervalMs = 800) {
+// Poll for transaction receipt until mined on Arc.
+// Arc has sub-second finality — usually confirmed within 1-2 polls.
+// Uses wallet provider first (no CORS), falls back to fetch().
+async function waitForReceipt(txHash, maxAttempts = 30, intervalMs = 1000) {
   for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const resp = await fetch('https://rpc.testnet.arc.network', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          jsonrpc: '2.0', id: 1,
-          method:  'eth_getTransactionReceipt',
-          params:  [txHash],
-        }),
-      })
-      const json = await resp.json()
-      const receipt = json.result
-      if (receipt && receipt.blockNumber) {
-        if (receipt.status === '0x0') {
-          throw new Error('Transaction reverted on Arc.')
-        }
-        console.log('[tx] confirmed in block', receipt.blockNumber)
-        return receipt
-      }
-    } catch (e) {
-      if (e.message && e.message.includes('reverted')) throw e
-    }
+    // Short wait before first poll — give Arc time to include the tx
     await new Promise(r => setTimeout(r, intervalMs))
+
+    let receipt = null
+
+    // Try wallet provider first (works from file://)
+    if (STATE.provider) {
+      try {
+        receipt = await STATE.provider.request({
+          method: 'eth_getTransactionReceipt',
+          params: [txHash],
+        })
+      } catch (e) { /* ignore, try fetch fallback */ }
+    }
+
+    // Fallback to direct Arc RPC fetch
+    if (!receipt) {
+      try {
+        const resp = await fetch('https://rpc.testnet.arc.network', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            jsonrpc: '2.0', id: 1,
+            method:  'eth_getTransactionReceipt',
+            params:  [txHash],
+          }),
+        })
+        const json = await resp.json()
+        receipt = json.result
+      } catch (e) { /* ignore */ }
+    }
+
+    if (receipt && receipt.blockNumber) {
+      if (receipt.status === '0x0') {
+        throw new Error('Transaction reverted on Arc.')
+      }
+      console.log('[tx] confirmed in block', parseInt(receipt.blockNumber, 16))
+      return receipt
+    }
   }
-  console.warn('[tx] waitForReceipt timeout — balance will still be refreshed')
+  console.warn('[tx] receipt timeout — balance refresh will run anyway')
   return null
 }
 
@@ -1224,11 +1254,13 @@ function renderPlans() {
   const q  = (document.getElementById('search-plans')?.value || '').toLowerCase()
   const fi = document.getElementById('filter-interval')?.value || ''
   const ft = document.getElementById('filter-token')?.value || ''
-  const filtered = PLANS.filter(p =>
-    (!q  || p.name.toLowerCase().includes(q)) &&
-    (!fi || p.interval === fi) &&
-    (!ft || p.token === ft)
-  )
+  const filtered = PLANS
+    .filter(p =>
+      (!q  || p.name.toLowerCase().includes(q)) &&
+      (!fi || p.interval === fi) &&
+      (!ft || p.token === ft)
+    )
+    .sort((a, b) => a.price - b.price)  // always lowest → highest
   const grid = document.getElementById('plan-grid')
   if (!grid) return
   grid.innerHTML = filtered.map(p => `
@@ -1275,9 +1307,9 @@ function openSubscribeModal(planId) {
       </div>
       ${plan.trial>0?`<div style="margin-top:10px;background:var(--green-dim);border:1px solid rgba(60,240,160,.2);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--green)">✓ ${plan.trial}-day free trial — first charge after trial ends</div>`:''}
     </div>
-    <div style="background:var(--gold-dim);border:1px solid rgba(240,184,64,.2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--gold);display:flex;gap:10px">
-      <span style="flex-shrink:0">⚠️</span>
-      <div><strong>Two-step:</strong> First approve USDC allowance (max, once), then subscribe. Funds are deducted immediately.</div>
+    <div style="background:var(--cyan-dim);border:1px solid rgba(56,200,240,.2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--cyan);display:flex;gap:10px">
+      <span style="flex-shrink:0">ℹ️</span>
+      <div>Your wallet will open for confirmation. Once approved, <strong>${plan.price} ${plan.token}</strong> will be sent directly to the merchant on Arc.</div>
     </div>
     <div style="background:var(--bg-0);border:1px solid var(--border);border-radius:var(--r-md);padding:14px;margin-bottom:18px">
       <div class="breakdown-row"><span style="color:var(--text-1)">Plan price</span><span style="font-family:var(--font-m);font-size:12px">${plan.price}.00 ${plan.token}</span></div>
@@ -1325,41 +1357,45 @@ async function confirmSubscribe(planId) {
   }
 
   try {
-    // ── Send USDC to merchant — single native value transfer ─────────────
-    // On Arc, USDC is the native token (like ETH on Ethereum).
-    // A plain eth_sendTransaction with `value` in Wei sends USDC directly.
-    // No ERC-20 approve/transfer needed — this is a native transfer.
-    // The wallet popup will show the merchant address and exact amount.
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet…'
+    // Snapshot balance BEFORE sending — used to detect when deduction lands
+    const balanceBefore = STATE.balance
 
-    // Convert plan price (USDC) to Wei: 1 USDC = 1e18 Wei on Arc
-    // Use BigInt string math to avoid float precision issues
+    // ── Send USDC to merchant — native value transfer ─────────────────────
+    // Arc USDC = native token. Plain eth_sendTransaction with value field.
+    // Opens wallet confirmation popup. User sees: recipient + exact amount.
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet confirmation…'
+
     const priceWei = BigInt(Math.round(plan.price * 1e18)).toString(16)
     const valueHex = '0x' + priceWei
 
-    // This call opens the wallet confirmation popup immediately
     const txHash = await STATE.provider.request({
       method: 'eth_sendTransaction',
       params: [{
-        from:  STATE.address,          // sender = connected wallet
-        to:    plan.merchant,          // recipient = merchant address (full 42-char)
-        value: valueHex,               // amount in Wei (Arc native USDC)
-        // No `data` field — this is a plain value transfer, not a contract call
+        from:  STATE.address,
+        to:    plan.merchant,
+        value: valueHex,
       }],
     })
 
-    // ── User confirmed — wait for block ──────────────────────────────────
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
-    await waitForReceipt(txHash)
+    // ── Tx submitted — poll until receipt confirmed on Arc ────────────────
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for confirmation on Arc…'
+    const receipt = await waitForReceipt(txHash)
 
-    // ── Re-fetch real on-chain balance from Arc RPC ───────────────────────
-    await fetchUsdcBalance()
-    flashBalance('down')
+    // ── Update balance: poll until on-chain value reflects deduction ───────
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Updating balance…'
+
+    // Immediate optimistic deduction so UI feels instant
+    if (balanceBefore !== null) {
+      setBalance(Math.max(0, balanceBefore - plan.price))
+      flashBalance('down')
+    }
+
+    // Then confirm with on-chain value (retries until balance actually changes)
+    fetchUsdcBalanceUntilChanged(balanceBefore).then(() => flashBalance('down'))
 
     closeModal('modal-subscribe')
-    toast('Subscribed!', `${plan.name} · -${plan.price} USDC confirmed · tx: ${txHash.slice(0,20)}…`, '✅')
+    toast('Subscribed!', `${plan.name} · -${plan.price} USDC · tx: ${txHash.slice(0,20)}…`, '✅')
 
-    // Add to local subscription list
     USER_SUBS.push({
       id: 200 + planId, planId: plan.id, planName: plan.name,
       merchant: plan.merchant.slice(0,10)+'…', price: plan.price,
@@ -1471,7 +1507,6 @@ async function confirmCharge(subId) {
   btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet…'
 
   try {
-    // Get the merchant address from PLANS
     const plan        = PLANS.find(p => p.id === sub.planId)
     const merchantAddr = plan ? plan.merchant : null
 
@@ -1479,25 +1514,30 @@ async function confirmCharge(subId) {
       throw new Error('Invalid merchant address')
     }
 
-    // Native value transfer: send USDC (Arc native) directly to merchant
+    const balanceBefore = STATE.balance
+
     const priceWei = BigInt(Math.round(sub.price * 1e18)).toString(16)
     const valueHex = '0x' + priceWei
 
+    // Opens wallet confirmation popup
     const txHash = await STATE.provider.request({
       method: 'eth_sendTransaction',
       params: [{
         from:  STATE.address,
         to:    merchantAddr,
         value: valueHex,
-        // No data field — plain USDC transfer on Arc
       }],
     })
 
     btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
     await waitForReceipt(txHash)
 
-    await fetchUsdcBalance()
-    flashBalance('down')
+    // Optimistic deduction, then on-chain confirmation
+    if (balanceBefore !== null) {
+      setBalance(Math.max(0, balanceBefore - sub.price))
+      flashBalance('down')
+    }
+    fetchUsdcBalanceUntilChanged(balanceBefore).then(() => flashBalance('down'))
 
     sub.status   = 'active'
     sub.payments += 1
