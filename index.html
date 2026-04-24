@@ -1309,7 +1309,7 @@ function openSubscribeModal(planId) {
     </div>
     <div style="background:var(--cyan-dim);border:1px solid rgba(56,200,240,.2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--cyan);display:flex;gap:10px">
       <span style="flex-shrink:0">ℹ️</span>
-      <div>Your wallet will open for confirmation. Once approved, <strong>${plan.price} ${plan.token}</strong> will be sent directly to the merchant on Arc.</div>
+      <div>Your wallet will open for confirmation. ${plan.trial>0 ? `<strong>${plan.trial}-day free trial</strong> — your wallet confirms the subscription but <strong>no charge today</strong>. First payment of ${plan.price} ${plan.token} begins after the trial.` : `Once approved, <strong>${plan.price} ${plan.token}</strong> will be sent directly to the merchant on Arc.`}</div>
     </div>
     <div style="background:var(--bg-0);border:1px solid var(--border);border-radius:var(--r-md);padding:14px;margin-bottom:18px">
       <div class="breakdown-row"><span style="color:var(--text-1)">Plan price</span><span style="font-family:var(--font-m);font-size:12px">${plan.price}.00 ${plan.token}</span></div>
@@ -1338,71 +1338,59 @@ async function confirmSubscribe(planId) {
   const btn = document.getElementById('sub-btn')
   btn.disabled = true
 
-  // ── Free trial — no payment, just activate ───────────────────────────
-  if (plan.trial > 0) {
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Activating trial…'
-    closeModal('modal-subscribe')
-    toast('Trial Started!', `${plan.name} · ${plan.trial}-day free trial`, '✅')
-    USER_SUBS.push({
-      id: 200 + planId, planId: plan.id, planName: plan.name,
-      merchant: plan.merchant.slice(0,10)+'…', price: plan.price,
-      token: plan.token, interval: plan.interval,
-      start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
-      next: 'Trial ends in ' + plan.trial + 'd', payments: 0, status: 'active'
-    })
-    btn.disabled = false
-    btn.innerHTML = 'Approve & Subscribe →'
-    renderDashboard()
-    return
-  }
-
   try {
-    // Snapshot balance BEFORE sending — used to detect when deduction lands
+    const isTrial = plan.trial > 0
+
+    // ── Always open wallet popup ──────────────────────────────────────────
+    // Trial plans:    value = 0x0  (no charge, but user still confirms in wallet)
+    // Paid plans:     value = plan price in Wei
+    // Wallet popup always appears regardless of trial status.
+    btn.innerHTML = `<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> ${isTrial ? 'Confirm trial in wallet…' : 'Waiting for wallet confirmation…'}`
+
     const balanceBefore = STATE.balance
 
-    // ── Send USDC to merchant — native value transfer ─────────────────────
-    // Arc USDC = native token. Plain eth_sendTransaction with value field.
-    // Opens wallet confirmation popup. User sees: recipient + exact amount.
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet confirmation…'
+    // For paid plans: convert price to Wei. For trials: send 0.
+    const valueHex = isTrial
+      ? '0x0'
+      : '0x' + BigInt(Math.round(plan.price * 1e18)).toString(16)
 
-    const priceWei = BigInt(Math.round(plan.price * 1e18)).toString(16)
-    const valueHex = '0x' + priceWei
-
+    // eth_sendTransaction — opens the wallet confirmation popup for every plan
     const txHash = await STATE.provider.request({
       method: 'eth_sendTransaction',
       params: [{
         from:  STATE.address,
-        to:    plan.merchant,
+        to:    plan.merchant,   // merchant receives the payment (or 0 for trial)
         value: valueHex,
       }],
     })
 
-    // ── Tx submitted — poll until receipt confirmed on Arc ────────────────
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for confirmation on Arc…'
-    const receipt = await waitForReceipt(txHash)
+    // ── Poll for confirmation on Arc ──────────────────────────────────────
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
+    await waitForReceipt(txHash)
 
-    // ── Update balance: poll until on-chain value reflects deduction ───────
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Updating balance…'
+    if (isTrial) {
+      // Trial: no balance deduction — just show success
+      closeModal('modal-subscribe')
+      toast('Trial Started!', `${plan.name} · ${plan.trial}-day free trial · tx: ${txHash.slice(0,20)}…`, '✅')
+    } else {
+      // Paid: optimistic deduction then confirm with on-chain value
+      if (balanceBefore !== null) {
+        setBalance(Math.max(0, balanceBefore - plan.price))
+        flashBalance('down')
+      }
+      fetchUsdcBalanceUntilChanged(balanceBefore).then(() => flashBalance('down'))
 
-    // Immediate optimistic deduction so UI feels instant
-    if (balanceBefore !== null) {
-      setBalance(Math.max(0, balanceBefore - plan.price))
-      flashBalance('down')
+      closeModal('modal-subscribe')
+      toast('Subscribed!', `${plan.name} · -${plan.price} USDC · tx: ${txHash.slice(0,20)}…`, '✅')
     }
-
-    // Then confirm with on-chain value (retries until balance actually changes)
-    fetchUsdcBalanceUntilChanged(balanceBefore).then(() => flashBalance('down'))
-
-    closeModal('modal-subscribe')
-    toast('Subscribed!', `${plan.name} · -${plan.price} USDC · tx: ${txHash.slice(0,20)}…`, '✅')
 
     USER_SUBS.push({
       id: 200 + planId, planId: plan.id, planName: plan.name,
       merchant: plan.merchant.slice(0,10)+'…', price: plan.price,
       token: plan.token, interval: plan.interval,
       start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
-      next: nextPaymentLabel(plan.interval),
-      payments: 1, status: 'active'
+      next: isTrial ? `Trial ends in ${plan.trial}d` : nextPaymentLabel(plan.interval),
+      payments: isTrial ? 0 : 1, status: 'active'
     })
     renderDashboard()
 
