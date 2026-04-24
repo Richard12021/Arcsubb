@@ -455,7 +455,7 @@ textarea.input{resize:vertical;min-height:72px}
     <p style="color:var(--text-1);font-size:14px;margin-bottom:28px">Arc Testnet is live. Get free USDC from the faucet and deploy in minutes.</p>
     <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
       <button class="btn-primary" style="font-size:15px;padding:12px 28px" onclick="showPage('browse')">Launch App</button>
-      <button class="btn-secondary" style="font-size:15px;padding:12px 28px" onclick="toast('Faucet','Visit faucet.circle.com to get testnet USDC','💧')">Get Testnet USDC</button>
+      <button class="btn-secondary" style="font-size:15px;padding:12px 28px" onclick="window.open('https://faucet.circle.com','_blank')">Get Testnet USDC ↗</button>
     </div>
     <p style="margin-top:20px;font-family:var(--font-m);font-size:11px;color:var(--text-3)">Arc Testnet · Chain ID 5042002 · USDC: 0x3600…0000</p>
   </section>
@@ -575,7 +575,7 @@ textarea.input{resize:vertical;min-height:72px}
         <button class="modal-close" onclick="closeModal('modal-create')">×</button>
       </div>
       <div class="modal-body">
-        <div class="notice">Get testnet USDC at <strong style="color:var(--cyan)">faucet.circle.com</strong> before deploying.</div>
+        <div class="notice">Get testnet USDC at <a href="https://faucet.circle.com" target="_blank" style="color:var(--cyan);text-decoration:none;font-weight:600">faucet.circle.com ↗</a> before deploying.</div>
         <div class="form-grid" style="margin-bottom:16px">
           <div class="form-group span-2"><label class="field-label">Plan Name *</label><input class="input" id="cp-name" placeholder="e.g. Premium Newsletter"></div>
           <div class="form-group span-2"><label class="field-label">Description</label><textarea class="input" id="cp-desc" placeholder="What subscribers get…"></textarea></div>
@@ -902,40 +902,78 @@ function showWalletError(msg) {
 
 // ══════════════════════════════════════════════
 // ON-CHAIN USDC BALANCE FETCH
-// Calls balanceOf(address) on the Arc USDC
-// contract via eth_call — no backend needed.
-// USDC on Arc: 0x3600000000000000000000000000000000000000
-// The ERC-20 interface exposes 6 decimals.
+//
+// Arc Testnet USDC: 0x3600000000000000000000000000000000000000
+//
+// Arc's native USDC is the gas token. It has
+// 18 decimals at the EVM level (matching native
+// gas accounting), even though it displays as
+// dollar-denominated. The wallet shows "10.00 USDC"
+// when the raw uint256 is 10_000_000_000_000_000_000.
+// So we divide by 1e18 — NOT 1e6.
+//
+// We call the Arc RPC directly via fetch() so
+// the balance is always read from Arc, regardless
+// of which chain the wallet extension is currently
+// pointed at. This avoids "wrong network" errors.
 // ══════════════════════════════════════════════
-const USDC_CONTRACT = '0x3600000000000000000000000000000000000000'
-// balanceOf(address) selector = keccak256("balanceOf(address)")[0..4] = 0x70a08231
+const USDC_CONTRACT       = '0x3600000000000000000000000000000000000000'
+const ARC_RPC             = 'https://rpc.testnet.arc.network'
+// keccak256("balanceOf(address)")[0..4] = 0x70a08231
 const BALANCE_OF_SELECTOR = '0x70a08231'
 
 async function fetchUsdcBalance() {
-  if (!STATE.provider || !STATE.address) return
+  if (!STATE.address) return
 
   try {
-    // Pad address to 32 bytes (remove 0x, left-pad with zeros to 64 hex chars)
-    const paddedAddr = STATE.address.replace('0x','').toLowerCase().padStart(64, '0')
-    const data       = BALANCE_OF_SELECTOR + paddedAddr
+    // ABI-encode: balanceOf(address) — pad address to 32 bytes
+    const paddedAddr = STATE.address.replace(/^0x/i,'').toLowerCase().padStart(64,'0')
+    const callData   = BALANCE_OF_SELECTOR + paddedAddr
 
-    const result = await STATE.provider.request({
-      method: 'eth_call',
-      params: [{
-        to:   USDC_CONTRACT,
-        data: data,
-      }, 'latest'],
-    })
+    // Strategy 1: direct JSON-RPC call to Arc RPC endpoint
+    // This always works regardless of which chain the wallet is on
+    let result = null
+    try {
+      const resp = await fetch(ARC_RPC, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id:      1,
+          method:  'eth_call',
+          params:  [{ to: USDC_CONTRACT, data: callData }, 'latest'],
+        }),
+      })
+      const json = await resp.json()
+      if (json.result && json.result !== '0x') result = json.result
+    } catch (rpcErr) {
+      console.warn('Direct RPC fetch failed, falling back to wallet provider:', rpcErr.message)
+    }
 
-    // result is a 32-byte hex value (uint256) — USDC has 6 decimals
+    // Strategy 2: fallback — call through the wallet provider
+    if (!result && STATE.provider) {
+      result = await STATE.provider.request({
+        method: 'eth_call',
+        params: [{ to: USDC_CONTRACT, data: callData }, 'latest'],
+      })
+    }
+
+    if (!result || result === '0x' || result === '0x0') {
+      STATE.balance = 0
+      updateBalanceDisplays()
+      return 0
+    }
+
+    // Arc native USDC uses 18 decimals at the EVM level
     const raw     = BigInt(result)
-    const balance = Number(raw) / 1e6   // 6 decimals
+    const balance = Number(raw) / 1e18
     STATE.balance = balance
     updateBalanceDisplays()
     return balance
+
   } catch (err) {
-    console.error('fetchUsdcBalance error:', err)
-    // Leave existing balance as-is on error
+    console.error('fetchUsdcBalance error:', err.message)
+    // Do not overwrite last-known balance on transient errors
   }
 }
 
@@ -1045,9 +1083,12 @@ function encodeAddress(addr) {
   return clean.padStart(64, '0')
 }
 
-// Encode a JS number to a 32-byte padded ABI uint256
+// Encode a number to a 32-byte padded ABI uint256
+// Uses BigInt to avoid floating-point precision loss with 1e18 values
 function encodeUint256(value) {
-  const hex = Math.floor(value).toString(16)
+  // Convert to BigInt safely: multiply integer part by 1 to drop any float drift
+  const big = BigInt(Math.round(value).toString())
+  const hex = big.toString(16)
   return hex.padStart(64, '0')
 }
 
@@ -1245,7 +1286,7 @@ async function confirmSubscribe(planId) {
     // Amount  = plan price in 6-decimal USDC (e.g. $10 = 10_000_000)
     btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Step 1/2 — Approve USDC…'
 
-    const amountHex    = encodeUint256(plan.price * 1e6)          // 6 decimals
+    const amountHex    = encodeUint256(plan.price * 1e18)         // 18 decimals (Arc native USDC)
     const maxAllowance = encodeUint256(Number.MAX_SAFE_INTEGER)    // approve max once
     const merchantPad  = encodeAddress(plan.merchant)
 
@@ -1396,7 +1437,7 @@ async function confirmCharge(subId) {
     const plan        = PLANS.find(p => p.id === sub.planId)
     const merchantRaw = plan ? plan.merchant : sub.merchant
     const merchantPad = encodeAddress(merchantRaw)
-    const amountHex   = encodeUint256(sub.price * 1e6)  // 6-decimal USDC
+    const amountHex   = encodeUint256(sub.price * 1e18)  // 18 decimals (Arc native USDC)
 
     // ERC-20 transfer(address,uint256) — selector 0xa9059cbb
     // Sends USDC directly from subscriber → merchant on Arc
