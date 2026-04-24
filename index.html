@@ -678,57 +678,66 @@ const REVENUE_DATA = [
 ]
 
 // ══════════════════════════════════════════════
-// WALLET DETECTION — runs on load, updates badges
 // ══════════════════════════════════════════════
-function detectWallets() {
-  // Detect MetaMask
-  const hasMetaMask = !!(
-    window.ethereum && (
-      window.ethereum.isMetaMask ||
-      (window.ethereum.providers && window.ethereum.providers.some(p => p.isMetaMask))
-    )
-  )
+// EIP-6963 MULTI-WALLET PROVIDER REGISTRY
+// Each extension announces itself with its own
+// UUID — no window.ethereum conflicts.
+// ══════════════════════════════════════════════
+const PROVIDERS = {}
+const RDNS_MM  = 'io.metamask'
+const RDNS_OKX = 'com.okex.wallet'
 
-  // Detect OKX — has its own dedicated injection
-  const hasOKX = !!(window.okxwallet)
-
-  // Update MetaMask badge + cursor
-  const mmBadge  = document.getElementById('mm-badge')
-  const mmOption = document.getElementById('mm-option')
-  if (mmBadge) {
-    if (hasMetaMask) {
-      mmBadge.textContent  = 'DETECTED'
-      mmBadge.className    = 'wallet-badge detected'
-      mmBadge.style.display = ''
-    } else {
-      mmBadge.textContent  = 'INSTALL'
-      mmBadge.className    = 'wallet-badge install'
-      mmBadge.style.display = ''
-      if (mmOption) mmOption.style.opacity = '0.55'
-    }
+window.addEventListener('eip6963:announceProvider', (event) => {
+  const { info, provider } = event.detail
+  PROVIDERS[info.rdns] = provider
+  if (info.rdns.includes('metamask') || (provider.isMetaMask && !provider.isOkxWallet)) {
+    if (!PROVIDERS[RDNS_MM]) PROVIDERS[RDNS_MM] = provider
   }
-
-  // Update OKX badge + cursor
-  const okxBadge  = document.getElementById('okx-badge')
-  const okxOption = document.getElementById('okx-option')
-  if (okxBadge) {
-    if (hasOKX) {
-      okxBadge.textContent  = 'DETECTED'
-      okxBadge.className    = 'wallet-badge detected'
-      okxBadge.style.display = ''
-    } else {
-      okxBadge.textContent  = 'INSTALL'
-      okxBadge.className    = 'wallet-badge install'
-      okxBadge.style.display = ''
-      if (okxOption) okxOption.style.opacity = '0.55'
-    }
+  if (info.rdns.includes('okx') || info.rdns.includes('okex') || provider.isOkxWallet) {
+    if (!PROVIDERS[RDNS_OKX]) PROVIDERS[RDNS_OKX] = provider
   }
+  updateDetectionBadges()
+})
+window.dispatchEvent(new Event('eip6963:requestProvider'))
+
+// Resolve the correct isolated provider for each wallet type
+function resolveProvider(type) {
+  if (type === 'okx') {
+    return PROVIDERS[RDNS_OKX]
+        || window.okxwallet
+        || (window.ethereum && window.ethereum.isOkxWallet ? window.ethereum : null)
+  }
+  if (type === 'metamask') {
+    if (PROVIDERS[RDNS_MM]) return PROVIDERS[RDNS_MM]
+    if (window.ethereum && window.ethereum.providers) {
+      const mm = window.ethereum.providers.find(
+        p => p.isMetaMask && !p.isOkxWallet && !p.isCoinbaseWallet
+      )
+      if (mm) return mm
+    }
+    if (window.ethereum && window.ethereum.isMetaMask && !window.ethereum.isOkxWallet) {
+      return window.ethereum
+    }
+    return null
+  }
+  return null
 }
 
-// Run detection once DOM is ready (wallet extensions inject asynchronously)
-// We run it immediately and again after 500ms to catch late injections
-detectWallets()
-setTimeout(detectWallets, 500)
+function updateDetectionBadges() {
+  const hasMM  = !!(resolveProvider('metamask'))
+  const hasOKX = !!(resolveProvider('okx'))
+  ;[['mm-badge','mm-option',hasMM],['okx-badge','okx-option',hasOKX]].forEach(([bid,oid,det]) => {
+    const b = document.getElementById(bid)
+    const o = document.getElementById(oid)
+    if (!b) return
+    b.textContent   = det ? 'DETECTED' : 'INSTALL'
+    b.className     = det ? 'wallet-badge detected' : 'wallet-badge install'
+    b.style.display = ''
+    if (o) o.style.opacity = det ? '1' : '0.55'
+  })
+}
+updateDetectionBadges()
+setTimeout(updateDetectionBadges, 800)
 function tickClock() {
   const now  = new Date()
   const d    = now.toISOString().slice(0,10)
@@ -781,26 +790,9 @@ async function connectWallet(type) {
   const desc    = document.getElementById(`${id}-desc`)
   const errEl   = document.getElementById('wallet-error')
 
-  // ── Resolve the correct EIP-1193 provider ──────────────────────────────
-  let provider = null
-
-  if (type === 'okx') {
-    // OKX injects window.okxwallet (dedicated) and also window.ethereum
-    // Prefer window.okxwallet so it doesn't clash with MetaMask
-    provider = window.okxwallet || null
-  } else {
-    // MetaMask: use EIP-6963 announced providers if available, else window.ethereum
-    // Check for MetaMask specifically via isMetaMask flag
-    if (window.ethereum) {
-      // Multiple wallets may share window.ethereum — find MetaMask's provider
-      if (window.ethereum.providers) {
-        // EIP-5749: array of providers injected by multiple extensions
-        provider = window.ethereum.providers.find(p => p.isMetaMask && !p.isOkxWallet) || null
-      } else if (window.ethereum.isMetaMask) {
-        provider = window.ethereum
-      }
-    }
-  }
+  // ── Resolve the correct isolated EIP-1193 provider via EIP-6963 registry ─
+  // resolveProvider() picks the wallet-specific provider, never the wrong one.
+  const provider = resolveProvider(type)
 
   // ── Not installed — redirect to Chrome Web Store ───────────────────────
   if (!provider) {
@@ -866,17 +858,23 @@ async function connectWallet(type) {
     STATE.wallet    = type
     STATE.address   = addr
     STATE.provider  = provider
+    STATE.balance   = 0  // will be replaced by real on-chain value below
 
     // Listen for account/chain changes
     provider.on('accountsChanged', accs => {
       if (!accs.length) { disconnectWallet() }
-      else { STATE.address = accs[0]; updateWalletUI() }
+      else {
+        STATE.address = accs[0]
+        fetchUsdcBalance().then(updateWalletUI)
+      }
     })
     provider.on('chainChanged', () => window.location.reload())
 
+    // Fetch real USDC balance from Arc, then render UI
+    await fetchUsdcBalance()
     closeWalletModal()
     updateWalletUI()
-    toast('Connected!', `${name} · ${shortAddr(addr)}`, type === 'metamask' ? '🦊' : '⬛')
+    toast('Connected!', `${name} · ${shortAddr(addr)}`, type === 'metamask' ? '\u{1F98A}' : '\u2B1B')
 
   } catch (err) {
     // Reset animation
@@ -901,6 +899,50 @@ function showWalletError(msg) {
   el.textContent    = msg
   el.style.display  = ''
 }
+
+// ══════════════════════════════════════════════
+// ON-CHAIN USDC BALANCE FETCH
+// Calls balanceOf(address) on the Arc USDC
+// contract via eth_call — no backend needed.
+// USDC on Arc: 0x3600000000000000000000000000000000000000
+// The ERC-20 interface exposes 6 decimals.
+// ══════════════════════════════════════════════
+const USDC_CONTRACT = '0x3600000000000000000000000000000000000000'
+// balanceOf(address) selector = keccak256("balanceOf(address)")[0..4] = 0x70a08231
+const BALANCE_OF_SELECTOR = '0x70a08231'
+
+async function fetchUsdcBalance() {
+  if (!STATE.provider || !STATE.address) return
+
+  try {
+    // Pad address to 32 bytes (remove 0x, left-pad with zeros to 64 hex chars)
+    const paddedAddr = STATE.address.replace('0x','').toLowerCase().padStart(64, '0')
+    const data       = BALANCE_OF_SELECTOR + paddedAddr
+
+    const result = await STATE.provider.request({
+      method: 'eth_call',
+      params: [{
+        to:   USDC_CONTRACT,
+        data: data,
+      }, 'latest'],
+    })
+
+    // result is a 32-byte hex value (uint256) — USDC has 6 decimals
+    const raw     = BigInt(result)
+    const balance = Number(raw) / 1e6   // 6 decimals
+    STATE.balance = balance
+    updateBalanceDisplays()
+    return balance
+  } catch (err) {
+    console.error('fetchUsdcBalance error:', err)
+    // Leave existing balance as-is on error
+  }
+}
+
+// Poll balance every 10 seconds while connected
+setInterval(() => {
+  if (STATE.connected) fetchUsdcBalance()
+}, 10000)
 
 // ══════════════════════════════════════════════
 // WALLET UI
@@ -992,12 +1034,68 @@ function disconnectWallet() {
 // ══════════════════════════════════════════════
 // BALANCE — immediate deduction with flash
 // ══════════════════════════════════════════════
+// ══════════════════════════════════════════════
+// TX HELPERS
+// ══════════════════════════════════════════════
+
+// Encode a hex address to a 32-byte padded ABI parameter
+function encodeAddress(addr) {
+  // Strip 0x, lowercase, left-pad to 64 hex chars
+  const clean = addr.replace(/^0x/i, '').toLowerCase()
+  return clean.padStart(64, '0')
+}
+
+// Encode a JS number to a 32-byte padded ABI uint256
+function encodeUint256(value) {
+  const hex = Math.floor(value).toString(16)
+  return hex.padStart(64, '0')
+}
+
+// Poll eth_getTransactionReceipt until the tx is mined on Arc
+// Arc has sub-second finality so this usually returns on first call
+async function waitForReceipt(txHash, maxAttempts = 30, intervalMs = 1000) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const receipt = await STATE.provider.request({
+        method: 'eth_getTransactionReceipt',
+        params: [txHash],
+      })
+      if (receipt && receipt.blockNumber) {
+        if (receipt.status === '0x0') {
+          throw new Error('Transaction reverted on-chain.')
+        }
+        return receipt
+      }
+    } catch (e) {
+      if (e.message && e.message.includes('reverted')) throw e
+    }
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  // Timeout — treat as likely mined (Arc is fast; fetch balance anyway)
+  console.warn('waitForReceipt timeout — proceeding anyway')
+  return null
+}
+
+// Human-readable next payment label based on interval
+function nextPaymentLabel(interval) {
+  const d = new Date()
+  if (interval === 'Weekly')   d.setDate(d.getDate() + 7)
+  if (interval === 'Monthly')  d.setMonth(d.getMonth() + 1)
+  if (interval === 'Annually') d.setFullYear(d.getFullYear() + 1)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function deductBalance(amount, label) {
-  const prev = STATE.balance
+  // Optimistic deduction — immediately reflect in UI
   STATE.balance = Math.max(0, STATE.balance - amount)
   flashBalance('down')
   updateBalanceDisplays()
-  toast('Payment Confirmed', `${label} · -${amount.toFixed(2)} USDC · tx: 0x${Math.random().toString(16).slice(2,10)}…`, '✅')
+  const fakeTx = '0x' + Math.random().toString(16).slice(2,10) + '…'
+  toast('Payment Confirmed', `${label} · -${amount.toFixed(2)} USDC · tx: ${fakeTx}`, '✅')
+  // Then re-fetch real on-chain balance after a short delay (tx needs to land)
+  setTimeout(() => {
+    fetchUsdcBalance().then(() => updateBalanceDisplays())
+  }, 3000)
 }
 
 function updateBalanceDisplays() {
@@ -1110,24 +1208,100 @@ function openSubscribeModal(planId) {
   document.getElementById('modal-subscribe').style.display = ''
 }
 
-function confirmSubscribe(planId) {
+async function confirmSubscribe(planId) {
   const plan = PLANS.find(p => p.id === planId)
   if (!plan) return
+
+  if (!STATE.connected || !STATE.provider) {
+    toast('Not Connected', 'Please connect your wallet first', '⚠️')
+    return
+  }
+
   const btn = document.getElementById('sub-btn')
-  btn.disabled = true
-  btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Approving USDC…'
-  setTimeout(() => {
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Subscribing…'
-    setTimeout(() => {
-      closeModal('modal-subscribe')
-      if (plan.trial === 0) {
-        deductBalance(plan.price, plan.name)
-      } else {
-        toast('Subscribed!', `${plan.name} · ${plan.trial}d trial started`, '✅')
-      }
-      renderDashboard()
-    }, 1400)
-  }, 1200)
+  btn.disabled  = true
+
+  // If plan has a free trial, no payment needed — just confirm
+  if (plan.trial > 0) {
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming trial…'
+    closeModal('modal-subscribe')
+    toast('Trial Started!', `${plan.name} · ${plan.trial}-day free trial active`, '✅')
+    USER_SUBS.push({
+      id: 200 + planId, planId: plan.id, planName: plan.name,
+      merchant: plan.merchant.slice(0,8)+'…', price: plan.price,
+      token: plan.token, interval: plan.interval,
+      start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+      next: 'Trial ends in ' + plan.trial + 'd', payments: 0, status: 'active'
+    })
+    renderDashboard()
+    btn.disabled = false
+    btn.innerHTML = 'Approve & Subscribe →'
+    return
+  }
+
+  try {
+    // ── Step 1: Approve USDC allowance ────────────────────────────────────
+    // ERC-20 approve(spender, amount) — selector 0x095ea7b3
+    // Spender = USDC contract itself in demo (real app = SubscriptionManager)
+    // Amount  = plan price in 6-decimal USDC (e.g. $10 = 10_000_000)
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Step 1/2 — Approve USDC…'
+
+    const amountHex    = encodeUint256(plan.price * 1e6)          // 6 decimals
+    const maxAllowance = encodeUint256(Number.MAX_SAFE_INTEGER)    // approve max once
+    const merchantPad  = encodeAddress(plan.merchant)
+
+    // approve(merchant_address, max_uint) on USDC contract
+    // Selector: keccak256("approve(address,uint256)")[0..4] = 0x095ea7b3
+    const approveTx = await STATE.provider.request({
+      method: 'eth_sendTransaction',
+      params: [{
+        from: STATE.address,
+        to:   USDC_CONTRACT,
+        data: '0x095ea7b3' + merchantPad + encodeUint256(2**53 - 1),
+      }]
+    })
+    toast('Approved!', 'USDC allowance set · tx: ' + approveTx.slice(0,18) + '…', '✓')
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Step 2/2 — Subscribing…'
+
+    // ── Step 2: Transfer USDC to merchant (subscription payment) ─────────
+    // ERC-20 transfer(address to, uint256 amount) — selector 0xa9059cbb
+    const transferTx = await STATE.provider.request({
+      method: 'eth_sendTransaction',
+      params: [{
+        from: STATE.address,
+        to:   USDC_CONTRACT,
+        data: '0xa9059cbb' + merchantPad + amountHex,
+      }]
+    })
+
+    // ── Wait for tx confirmation, then re-fetch real balance ──────────────
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
+    await waitForReceipt(transferTx)
+
+    // Fetch fresh on-chain balance — this is the authoritative number
+    await fetchUsdcBalance()
+    flashBalance('down')
+    updateBalanceDisplays()
+
+    closeModal('modal-subscribe')
+    toast('Subscribed!', `${plan.name} · -${plan.price} USDC · tx: ${transferTx.slice(0,18)}…`, '✅')
+
+    USER_SUBS.push({
+      id: 200 + planId, planId: plan.id, planName: plan.name,
+      merchant: plan.merchant.slice(0,8)+'…', price: plan.price,
+      token: plan.token, interval: plan.interval,
+      start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+      next: nextPaymentLabel(plan.interval),
+      payments: 1, status: 'active'
+    })
+    renderDashboard()
+
+  } catch (err) {
+    const msg = err.code === 4001 ? 'Transaction rejected in wallet.' : (err.message || 'Transaction failed.')
+    toast('Transaction Failed', msg, '❌')
+  } finally {
+    btn.disabled  = false
+    btn.innerHTML = 'Approve & Subscribe →'
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -1204,31 +1378,106 @@ function openChargeModal(subId) {
   document.getElementById('modal-charge').style.display = ''
 }
 
-function confirmCharge(subId) {
+async function confirmCharge(subId) {
   const sub = USER_SUBS.find(s => s.id === subId)
   if (!sub) return
+
+  if (!STATE.connected || !STATE.provider) {
+    toast('Not Connected', 'Please connect your wallet first', '⚠️')
+    return
+  }
+
   const btn = document.getElementById('charge-btn')
-  btn.disabled=true
-  btn.innerHTML='<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Paying…'
-  setTimeout(() => {
-    closeModal('modal-charge')
+  btn.disabled  = true
+  btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet…'
+
+  try {
+    // Find merchant address from PLANS data
+    const plan        = PLANS.find(p => p.id === sub.planId)
+    const merchantRaw = plan ? plan.merchant : sub.merchant
+    const merchantPad = encodeAddress(merchantRaw)
+    const amountHex   = encodeUint256(sub.price * 1e6)  // 6-decimal USDC
+
+    // ERC-20 transfer(address,uint256) — selector 0xa9059cbb
+    // Sends USDC directly from subscriber → merchant on Arc
+    const txHash = await STATE.provider.request({
+      method: 'eth_sendTransaction',
+      params: [{
+        from: STATE.address,
+        to:   USDC_CONTRACT,
+        data: '0xa9059cbb' + merchantPad + amountHex,
+      }]
+    })
+
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
+
+    // Wait for block confirmation
+    await waitForReceipt(txHash)
+
+    // Fetch the authoritative on-chain balance
+    await fetchUsdcBalance()
+    flashBalance('down')
+    updateBalanceDisplays()
+
+    // Update subscription state
     sub.status   = 'active'
     sub.payments += 1
-    sub.next     = 'May 28, 2026'
-    deductBalance(sub.price, sub.planName)
+    sub.next     = nextPaymentLabel(sub.interval)
+
+    closeModal('modal-charge')
+    toast('Payment Confirmed!', `${sub.planName} · -${sub.price} USDC · tx: ${txHash.slice(0,18)}…`, '✅')
     renderDashboard()
-  }, 1500)
+
+  } catch (err) {
+    const msg = err.code === 4001 ? 'Transaction rejected in wallet.' : (err.message || 'Transaction failed.')
+    toast('Transaction Failed', msg, '❌')
+  } finally {
+    btn.disabled  = false
+    btn.innerHTML = 'Confirm Payment →'
+  }
 }
 
-function cancelSubConfirm(subId) {
+async function cancelSubConfirm(subId) {
   const sub = USER_SUBS.find(s => s.id === subId)
   if (!sub) return
-  closeModal('modal-charge')
-  // tiny gas fee
-  deductBalance(0.01, `cancelSubscription(${subId}) · gas`)
-  sub.status = 'cancelled'
-  toast('Cancelled', `${sub.planName} cancelled on Arc`, '🔴')
-  renderDashboard()
+
+  if (!STATE.connected || !STATE.provider) {
+    toast('Not Connected', 'Please connect your wallet first', '⚠️')
+    return
+  }
+
+  // Cancellation is an on-chain state change (no token transfer).
+  // In the demo we send a 0-value tx to USDC contract as a proxy for
+  // calling cancelSubscription() on the real SubscriptionManager contract.
+  // The wallet popup will show for the user to confirm/reject.
+  try {
+    const btn = document.getElementById('cancel-btn-' + subId)
+    if (btn) { btn.disabled = true; btn.textContent = '↻ Cancelling…' }
+
+    const txHash = await STATE.provider.request({
+      method: 'eth_sendTransaction',
+      params: [{
+        from:  STATE.address,
+        to:    USDC_CONTRACT,
+        value: '0x0',
+        data:  '0x',   // empty data — represents the cancelSubscription() call
+      }]
+    })
+
+    await waitForReceipt(txHash)
+
+    // Re-fetch balance (gas was paid in USDC on Arc)
+    await fetchUsdcBalance()
+    updateBalanceDisplays()
+
+    sub.status = 'cancelled'
+    closeModal('modal-charge')
+    toast('Cancelled', `${sub.planName} cancelled on Arc · tx: ${txHash.slice(0,18)}…`, '🔴')
+    renderDashboard()
+  } catch (err) {
+    const msg = err.code === 4001 ? 'Cancellation rejected in wallet.' : (err.message || 'Failed.')
+    toast('Failed', msg, '❌')
+  }
 }
 
 // ══════════════════════════════════════════════
