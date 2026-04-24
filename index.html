@@ -648,12 +648,12 @@ const STATE = {
 
 // Demo plans
 const PLANS = [
-  {id:1,name:'Premium Newsletter',desc:'Weekly deep-dives into DeFi, AI, and macro finance. Curated by ex-Goldman analysts.',price:10,interval:'Monthly',token:'USDC',trial:0,max:500,subs:142,color:'#38c8f0',merchant:'0xA1b2c3d4e5f6a7b8'},
-  {id:2,name:'SaaS Builder Pro',desc:'Full access to our analytics platform, API integrations, and 24/7 support.',price:25,interval:'Monthly',token:'USDC',trial:7,max:0,subs:67,color:'#f0b840',merchant:'0xB2c3d4e5f6a7b8c9'},
-  {id:3,name:'Membership Pass',desc:'Join our exclusive creator community. Access gated content, weekly AMAs, and Discord perks.',price:5,interval:'Weekly',token:'USDC',trial:0,max:1000,subs:289,color:'#3cf0a0',merchant:'0xC3d4e5f6a7b8c9d0'},
-  {id:4,name:'Research Vault',desc:'Annual subscription to institutional-grade onchain research.',price:199,interval:'Annually',token:'USDC',trial:14,max:200,subs:38,color:'#9b7ff0',merchant:'0xD4e5f6a7b8c9d0e1'},
-  {id:5,name:'Yield Signals',desc:'Real-time USDC yield opportunities across DeFi. Automated alerts, backtested strategies.',price:15,interval:'Monthly',token:'EURC',trial:0,max:0,subs:91,color:'#f05060',merchant:'0xE5f6a7b8c9d0e1f2'},
-  {id:6,name:'Web3 Bootcamp',desc:'8-week structured course on building DeFi apps on Arc.',price:149,interval:'Annually',token:'USDC',trial:3,max:50,subs:44,color:'#38c8f0',merchant:'0xF6a7b8c9d0e1f2a3'},
+  {id:1,name:'Premium Newsletter',desc:'Weekly deep-dives into DeFi, AI, and macro finance. Curated by ex-Goldman analysts.',price:10,interval:'Monthly',token:'USDC',trial:0,max:500,subs:142,color:'#38c8f0',merchant:'0xA1b2C3D4e5F6A7B8C9D0e1F2A3b4C5D6e7F8A9b0'},
+  {id:2,name:'SaaS Builder Pro',desc:'Full access to our analytics platform, API integrations, and 24/7 support.',price:25,interval:'Monthly',token:'USDC',trial:7,max:0,subs:67,color:'#f0b840',merchant:'0xB2C3D4E5f6A7B8c9D0E1F2a3B4c5D6E7f8A9B0c1'},
+  {id:3,name:'Membership Pass',desc:'Join our exclusive creator community. Access gated content, weekly AMAs, and Discord perks.',price:5,interval:'Weekly',token:'USDC',trial:0,max:1000,subs:289,color:'#3cf0a0',merchant:'0xC3D4E5F6A7b8C9d0E1f2A3B4C5d6E7F8a9B0C1d2'},
+  {id:4,name:'Research Vault',desc:'Annual subscription to institutional-grade onchain research.',price:199,interval:'Annually',token:'USDC',trial:14,max:200,subs:38,color:'#9b7ff0',merchant:'0xD4E5F6A7B8C9d0E1F2A3b4C5D6e7F8A9B0C1d2e3'},
+  {id:5,name:'Yield Signals',desc:'Real-time USDC yield opportunities across DeFi. Automated alerts, backtested strategies.',price:15,interval:'Monthly',token:'EURC',trial:0,max:0,subs:91,color:'#f05060',merchant:'0xE5F6A7B8C9D0e1F2a3B4c5D6E7f8A9b0C1D2e3f4'},
+  {id:6,name:'Web3 Bootcamp',desc:'8-week structured course on building DeFi apps on Arc.',price:149,interval:'Annually',token:'USDC',trial:3,max:50,subs:44,color:'#38c8f0',merchant:'0xF6A7B8C9D0E1f2A3b4C5d6E7F8a9B0c1D2E3f4a5'},
 ]
 
 // Demo subscriptions
@@ -1125,19 +1125,29 @@ function encodeUint256(value) {
   return hex.padStart(64, '0')
 }
 
-// Poll eth_getTransactionReceipt until the tx is mined on Arc
-// Arc has sub-second finality so this usually returns on first call
-async function waitForReceipt(txHash, maxAttempts = 30, intervalMs = 1000) {
+// Poll eth_getTransactionReceipt on Arc's RPC until mined.
+// Uses direct fetch() to Arc RPC — not the wallet provider —
+// so receipt polling always hits Arc regardless of wallet chain.
+// Arc has sub-second finality so usually confirmed on first poll.
+async function waitForReceipt(txHash, maxAttempts = 40, intervalMs = 800) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const receipt = await STATE.provider.request({
-        method: 'eth_getTransactionReceipt',
-        params: [txHash],
+      const resp = await fetch('https://rpc.testnet.arc.network', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          jsonrpc: '2.0', id: 1,
+          method:  'eth_getTransactionReceipt',
+          params:  [txHash],
+        }),
       })
+      const json = await resp.json()
+      const receipt = json.result
       if (receipt && receipt.blockNumber) {
         if (receipt.status === '0x0') {
-          throw new Error('Transaction reverted on-chain.')
+          throw new Error('Transaction reverted on Arc.')
         }
+        console.log('[tx] confirmed in block', receipt.blockNumber)
         return receipt
       }
     } catch (e) {
@@ -1145,8 +1155,7 @@ async function waitForReceipt(txHash, maxAttempts = 30, intervalMs = 1000) {
     }
     await new Promise(r => setTimeout(r, intervalMs))
   }
-  // Timeout — treat as likely mined (Arc is fast; fetch balance anyway)
-  console.warn('waitForReceipt timeout — proceeding anyway')
+  console.warn('[tx] waitForReceipt timeout — balance will still be refreshed')
   return null
 }
 
@@ -1295,76 +1304,65 @@ async function confirmSubscribe(planId) {
   }
 
   const btn = document.getElementById('sub-btn')
-  btn.disabled  = true
+  btn.disabled = true
 
-  // If plan has a free trial, no payment needed — just confirm
+  // ── Free trial — no payment, just activate ───────────────────────────
   if (plan.trial > 0) {
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming trial…'
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Activating trial…'
     closeModal('modal-subscribe')
-    toast('Trial Started!', `${plan.name} · ${plan.trial}-day free trial active`, '✅')
+    toast('Trial Started!', `${plan.name} · ${plan.trial}-day free trial`, '✅')
     USER_SUBS.push({
       id: 200 + planId, planId: plan.id, planName: plan.name,
-      merchant: plan.merchant.slice(0,8)+'…', price: plan.price,
+      merchant: plan.merchant.slice(0,10)+'…', price: plan.price,
       token: plan.token, interval: plan.interval,
       start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
       next: 'Trial ends in ' + plan.trial + 'd', payments: 0, status: 'active'
     })
-    renderDashboard()
     btn.disabled = false
     btn.innerHTML = 'Approve & Subscribe →'
+    renderDashboard()
     return
   }
 
   try {
-    // ── Step 1: Approve USDC allowance ────────────────────────────────────
-    // ERC-20 approve(spender, amount) — selector 0x095ea7b3
-    // Spender = USDC contract itself in demo (real app = SubscriptionManager)
-    // Amount  = plan price in 6-decimal USDC (e.g. $10 = 10_000_000)
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Step 1/2 — Approve USDC…'
+    // ── Send USDC to merchant — single native value transfer ─────────────
+    // On Arc, USDC is the native token (like ETH on Ethereum).
+    // A plain eth_sendTransaction with `value` in Wei sends USDC directly.
+    // No ERC-20 approve/transfer needed — this is a native transfer.
+    // The wallet popup will show the merchant address and exact amount.
+    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet…'
 
-    const amountHex    = encodeUint256(plan.price * 1e18)         // 18 decimals (Arc native USDC)
-    const maxAllowance = encodeUint256(Number.MAX_SAFE_INTEGER)    // approve max once
-    const merchantPad  = encodeAddress(plan.merchant)
+    // Convert plan price (USDC) to Wei: 1 USDC = 1e18 Wei on Arc
+    // Use BigInt string math to avoid float precision issues
+    const priceWei = BigInt(Math.round(plan.price * 1e18)).toString(16)
+    const valueHex = '0x' + priceWei
 
-    // approve(merchant_address, max_uint) on USDC contract
-    // Selector: keccak256("approve(address,uint256)")[0..4] = 0x095ea7b3
-    const approveTx = await STATE.provider.request({
+    // This call opens the wallet confirmation popup immediately
+    const txHash = await STATE.provider.request({
       method: 'eth_sendTransaction',
       params: [{
-        from: STATE.address,
-        to:   USDC_CONTRACT,
-        data: '0x095ea7b3' + merchantPad + encodeUint256(2**53 - 1),
-      }]
-    })
-    toast('Approved!', 'USDC allowance set · tx: ' + approveTx.slice(0,18) + '…', '✓')
-    btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Step 2/2 — Subscribing…'
-
-    // ── Step 2: Transfer USDC to merchant (subscription payment) ─────────
-    // ERC-20 transfer(address to, uint256 amount) — selector 0xa9059cbb
-    const transferTx = await STATE.provider.request({
-      method: 'eth_sendTransaction',
-      params: [{
-        from: STATE.address,
-        to:   USDC_CONTRACT,
-        data: '0xa9059cbb' + merchantPad + amountHex,
-      }]
+        from:  STATE.address,          // sender = connected wallet
+        to:    plan.merchant,          // recipient = merchant address (full 42-char)
+        value: valueHex,               // amount in Wei (Arc native USDC)
+        // No `data` field — this is a plain value transfer, not a contract call
+      }],
     })
 
-    // ── Wait for tx confirmation, then re-fetch real balance ──────────────
+    // ── User confirmed — wait for block ──────────────────────────────────
     btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
-    await waitForReceipt(transferTx)
+    await waitForReceipt(txHash)
 
-    // Fetch fresh on-chain balance — this is the authoritative number
+    // ── Re-fetch real on-chain balance from Arc RPC ───────────────────────
     await fetchUsdcBalance()
     flashBalance('down')
-    updateBalanceDisplays()
 
     closeModal('modal-subscribe')
-    toast('Subscribed!', `${plan.name} · -${plan.price} USDC · tx: ${transferTx.slice(0,18)}…`, '✅')
+    toast('Subscribed!', `${plan.name} · -${plan.price} USDC confirmed · tx: ${txHash.slice(0,20)}…`, '✅')
 
+    // Add to local subscription list
     USER_SUBS.push({
       id: 200 + planId, planId: plan.id, planName: plan.name,
-      merchant: plan.merchant.slice(0,8)+'…', price: plan.price,
+      merchant: plan.merchant.slice(0,10)+'…', price: plan.price,
       token: plan.token, interval: plan.interval,
       start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
       next: nextPaymentLabel(plan.interval),
@@ -1373,8 +1371,12 @@ async function confirmSubscribe(planId) {
     renderDashboard()
 
   } catch (err) {
-    const msg = err.code === 4001 ? 'Transaction rejected in wallet.' : (err.message || 'Transaction failed.')
-    toast('Transaction Failed', msg, '❌')
+    if (err.code === 4001) {
+      toast('Cancelled', 'Transaction rejected in wallet', '✕')
+    } else {
+      toast('Transaction Failed', err.message || 'Unknown error', '❌')
+      console.error('[subscribe] error:', err)
+    }
   } finally {
     btn.disabled  = false
     btn.innerHTML = 'Approve & Subscribe →'
@@ -1469,45 +1471,48 @@ async function confirmCharge(subId) {
   btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Waiting for wallet…'
 
   try {
-    // Find merchant address from PLANS data
+    // Get the merchant address from PLANS
     const plan        = PLANS.find(p => p.id === sub.planId)
-    const merchantRaw = plan ? plan.merchant : sub.merchant
-    const merchantPad = encodeAddress(merchantRaw)
-    const amountHex   = encodeUint256(sub.price * 1e18)  // 18 decimals (Arc native USDC)
+    const merchantAddr = plan ? plan.merchant : null
 
-    // ERC-20 transfer(address,uint256) — selector 0xa9059cbb
-    // Sends USDC directly from subscriber → merchant on Arc
+    if (!merchantAddr || merchantAddr.length !== 42) {
+      throw new Error('Invalid merchant address')
+    }
+
+    // Native value transfer: send USDC (Arc native) directly to merchant
+    const priceWei = BigInt(Math.round(sub.price * 1e18)).toString(16)
+    const valueHex = '0x' + priceWei
+
     const txHash = await STATE.provider.request({
       method: 'eth_sendTransaction',
       params: [{
-        from: STATE.address,
-        to:   USDC_CONTRACT,
-        data: '0xa9059cbb' + merchantPad + amountHex,
-      }]
+        from:  STATE.address,
+        to:    merchantAddr,
+        value: valueHex,
+        // No data field — plain USDC transfer on Arc
+      }],
     })
 
     btn.innerHTML = '<span style="animation:spin .8s linear infinite;display:inline-block">↻</span> Confirming on Arc…'
-
-    // Wait for block confirmation
     await waitForReceipt(txHash)
 
-    // Fetch the authoritative on-chain balance
     await fetchUsdcBalance()
     flashBalance('down')
-    updateBalanceDisplays()
 
-    // Update subscription state
     sub.status   = 'active'
     sub.payments += 1
     sub.next     = nextPaymentLabel(sub.interval)
 
     closeModal('modal-charge')
-    toast('Payment Confirmed!', `${sub.planName} · -${sub.price} USDC · tx: ${txHash.slice(0,18)}…`, '✅')
+    toast('Payment Confirmed!', `${sub.planName} · -${sub.price} USDC · tx: ${txHash.slice(0,20)}…`, '✅')
     renderDashboard()
 
   } catch (err) {
-    const msg = err.code === 4001 ? 'Transaction rejected in wallet.' : (err.message || 'Transaction failed.')
-    toast('Transaction Failed', msg, '❌')
+    if (err.code === 4001) {
+      toast('Cancelled', 'Transaction rejected in wallet', '✕')
+    } else {
+      toast('Transaction Failed', err.message || 'Unknown error', '❌')
+    }
   } finally {
     btn.disabled  = false
     btn.innerHTML = 'Confirm Payment →'
@@ -1531,14 +1536,14 @@ async function cancelSubConfirm(subId) {
     const btn = document.getElementById('cancel-btn-' + subId)
     if (btn) { btn.disabled = true; btn.textContent = '↻ Cancelling…' }
 
+    // Send 0-value tx to own address — minimal gas tx, opens wallet to confirm
     const txHash = await STATE.provider.request({
       method: 'eth_sendTransaction',
       params: [{
         from:  STATE.address,
-        to:    USDC_CONTRACT,
+        to:    STATE.address,
         value: '0x0',
-        data:  '0x',   // empty data — represents the cancelSubscription() call
-      }]
+      }],
     })
 
     await waitForReceipt(txHash)
