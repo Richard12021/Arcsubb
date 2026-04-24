@@ -870,10 +870,14 @@ async function connectWallet(type) {
     })
     provider.on('chainChanged', () => window.location.reload())
 
-    // Fetch real USDC balance from Arc, then render UI
-    await fetchUsdcBalance()
+    // Show connected UI immediately with loading balance
+    STATE.balance = null  // null → shows "… USDC" loading state
     closeWalletModal()
     updateWalletUI()
+
+    // Fetch real balance from ArcScan explorer
+    await fetchUsdcBalance()
+    // updateBalanceDisplays() is called inside fetchUsdcBalance → setBalance()
     toast('Connected!', `${name} · ${shortAddr(addr)}`, type === 'metamask' ? '\u{1F98A}' : '\u2B1B')
 
   } catch (err) {
@@ -901,83 +905,114 @@ function showWalletError(msg) {
 }
 
 // ══════════════════════════════════════════════
-// ON-CHAIN USDC BALANCE FETCH
+// ON-CHAIN USDC BALANCE — via ArcScan Explorer
 //
-// Arc Testnet USDC: 0x3600000000000000000000000000000000000000
+// On Arc, USDC is the native gas token.
+// The native balance (Wei, 18 decimals) equals
+// the USDC balance shown in the wallet.
 //
-// Arc's native USDC is the gas token. It has
-// 18 decimals at the EVM level (matching native
-// gas accounting), even though it displays as
-// dollar-denominated. The wallet shows "10.00 USDC"
-// when the raw uint256 is 10_000_000_000_000_000_000.
-// So we divide by 1e18 — NOT 1e6.
+// We query 3 sources in order, using the first
+// that succeeds:
 //
-// We call the Arc RPC directly via fetch() so
-// the balance is always read from Arc, regardless
-// of which chain the wallet extension is currently
-// pointed at. This avoids "wrong network" errors.
+//  1. ArcScan Blockscout API v2  (most accurate)
+//     GET /api/v2/addresses/{addr}
+//     → response.coin_balance  (raw Wei string)
+//
+//  2. ArcScan Blockscout API v1  (classic fallback)
+//     GET /api?module=account&action=eth_get_balance
+//     → response.result  (raw Wei string)
+//
+//  3. Arc JSON-RPC eth_getBalance  (final fallback)
+//     POST rpc.testnet.arc.network
+//     → result  (hex Wei string)
+//
+// All three return the same native balance.
+// Divide by 1e18 to get USDC.
 // ══════════════════════════════════════════════
-const USDC_CONTRACT       = '0x3600000000000000000000000000000000000000'
-const ARC_RPC             = 'https://rpc.testnet.arc.network'
-// keccak256("balanceOf(address)")[0..4] = 0x70a08231
-const BALANCE_OF_SELECTOR = '0x70a08231'
+const USDC_CONTRACT = '0x3600000000000000000000000000000000000000'
+const ARC_RPC       = 'https://rpc.testnet.arc.network'
+const ARCSCAN_API   = 'https://testnet.arcscan.app/api'
 
 async function fetchUsdcBalance() {
   if (!STATE.address) return
 
+  const addr = STATE.address
+
+  // ── Source 1: ArcScan Blockscout v2 API ──────────────────────────────
   try {
-    // ABI-encode: balanceOf(address) — pad address to 32 bytes
-    const paddedAddr = STATE.address.replace(/^0x/i,'').toLowerCase().padStart(64,'0')
-    const callData   = BALANCE_OF_SELECTOR + paddedAddr
-
-    // Strategy 1: direct JSON-RPC call to Arc RPC endpoint
-    // This always works regardless of which chain the wallet is on
-    let result = null
-    try {
-      const resp = await fetch(ARC_RPC, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id:      1,
-          method:  'eth_call',
-          params:  [{ to: USDC_CONTRACT, data: callData }, 'latest'],
-        }),
-      })
-      const json = await resp.json()
-      if (json.result && json.result !== '0x') result = json.result
-    } catch (rpcErr) {
-      console.warn('Direct RPC fetch failed, falling back to wallet provider:', rpcErr.message)
+    const resp = await fetch(
+      `https://testnet.arcscan.app/api/v2/addresses/${addr}`,
+      { headers: { 'Accept': 'application/json' } }
+    )
+    if (resp.ok) {
+      const data = await resp.json()
+      // coin_balance is the native balance string in Wei (18 decimals)
+      if (data && data.coin_balance !== undefined && data.coin_balance !== null) {
+        const wei     = BigInt(data.coin_balance)
+        const balance = Number(wei) / 1e18
+        setBalance(balance)
+        return balance
+      }
     }
-
-    // Strategy 2: fallback — call through the wallet provider
-    if (!result && STATE.provider) {
-      result = await STATE.provider.request({
-        method: 'eth_call',
-        params: [{ to: USDC_CONTRACT, data: callData }, 'latest'],
-      })
-    }
-
-    if (!result || result === '0x' || result === '0x0') {
-      STATE.balance = 0
-      updateBalanceDisplays()
-      return 0
-    }
-
-    // Arc native USDC uses 18 decimals at the EVM level
-    const raw     = BigInt(result)
-    const balance = Number(raw) / 1e18
-    STATE.balance = balance
-    updateBalanceDisplays()
-    return balance
-
-  } catch (err) {
-    console.error('fetchUsdcBalance error:', err.message)
-    // Do not overwrite last-known balance on transient errors
+  } catch (e) {
+    console.warn('[balance] ArcScan v2 failed:', e.message)
   }
+
+  // ── Source 2: ArcScan Blockscout v1 API ──────────────────────────────
+  try {
+    const resp = await fetch(
+      `${ARCSCAN_API}?module=account&action=eth_get_balance&address=${addr}&tag=latest`,
+      { headers: { 'Accept': 'application/json' } }
+    )
+    if (resp.ok) {
+      const data = await resp.json()
+      // result is the Wei balance as a decimal string when status === "1"
+      if (data && data.status === '1' && data.result) {
+        const wei     = BigInt(data.result)
+        const balance = Number(wei) / 1e18
+        setBalance(balance)
+        return balance
+      }
+    }
+  } catch (e) {
+    console.warn('[balance] ArcScan v1 failed:', e.message)
+  }
+
+  // ── Source 3: Arc JSON-RPC eth_getBalance ─────────────────────────────
+  try {
+    const resp = await fetch(ARC_RPC, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method:  'eth_getBalance',
+        params:  [addr, 'latest'],
+      }),
+    })
+    if (resp.ok) {
+      const data = await resp.json()
+      // result is a hex string e.g. "0x8ac7230489e80000"
+      if (data && data.result && data.result !== '0x0' && data.result !== '0x') {
+        const wei     = BigInt(data.result)
+        const balance = Number(wei) / 1e18
+        setBalance(balance)
+        return balance
+      }
+    }
+  } catch (e) {
+    console.warn('[balance] Arc RPC eth_getBalance failed:', e.message)
+  }
+
+  // ── All sources failed — keep last-known balance ──────────────────────
+  console.error('[balance] All sources failed for', addr)
 }
 
-// Poll balance every 10 seconds while connected
+function setBalance(balance) {
+  STATE.balance = balance
+  updateBalanceDisplays()
+}
+
+// Poll every 10 s while connected
 setInterval(() => {
   if (STATE.connected) fetchUsdcBalance()
 }, 10000)
@@ -1140,14 +1175,19 @@ function deductBalance(amount, label) {
 }
 
 function updateBalanceDisplays() {
-  const disp = document.getElementById('balance-display')
-  if (disp) disp.textContent = STATE.balance.toFixed(2) + ' USDC'
-  const sb = document.getElementById('sidebar-balance')
-  if (sb) sb.textContent = STATE.balance.toFixed(2) + ' USDC'
-  const usb = document.getElementById('user-sidebar-balance')
-  if (usb) usb.textContent = STATE.balance.toFixed(2) + ' USDC'
-  const dropBal = document.getElementById('drop-balance')
-  if (dropBal) dropBal.textContent = STATE.balance.toFixed(2) + ' USDC'
+  // Show 4 decimal places — matches ArcScan explorer display precision
+  const fmt = (n) => {
+    if (n === undefined || n === null || isNaN(n)) return '… USDC'
+    // Use 4 dp for small amounts, 2 dp for large
+    const dp = n < 1 ? 6 : n < 1000 ? 4 : 2
+    return n.toFixed(dp) + ' USDC'
+  }
+  const v = fmt(STATE.balance)
+  const ids = ['balance-display','sidebar-balance','user-sidebar-balance','drop-balance']
+  ids.forEach(id => {
+    const el = document.getElementById(id)
+    if (el) el.textContent = v
+  })
 }
 
 function flashBalance(direction) {
