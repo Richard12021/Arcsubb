@@ -242,6 +242,38 @@ textarea.input{resize:vertical;min-height:72px}
   .stats-row{grid-template-columns:1fr 1fr}
   .plan-grid{grid-template-columns:1fr}
 }
+
+/* ── V2 additions ── */
+.badge-overdue{background:rgba(240,184,64,.12);color:var(--gold);border:1px solid rgba(240,184,64,.3)}
+.badge-overdue::before{background:var(--gold);animation:pulse 1s infinite}
+.badge-suspended{background:var(--red-dim);color:var(--red);border:1px solid rgba(240,80,96,.3)}
+.badge-suspended::before{background:var(--red)}
+
+.retry-bar{background:var(--bg-0);border:1px solid rgba(240,184,64,.3);border-radius:var(--r-md);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--gold);display:flex;gap:10px;align-items:flex-start}
+.grace-bar{background:rgba(240,80,96,.06);border:1px solid rgba(240,80,96,.25);border-radius:var(--r-md);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--red);display:flex;gap:10px;align-items:flex-start}
+
+.coupon-input-row{display:flex;gap:8px;margin-bottom:14px}
+.coupon-input-row input{flex:1}
+.coupon-ok{color:var(--green);font-size:11px;font-family:var(--font-m);margin-top:4px}
+.coupon-err{color:var(--red);font-size:11px;font-family:var(--font-m);margin-top:4px}
+
+.notif-dot{width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;margin-top:4px}
+.notif-unread{background:var(--bg-2)}
+
+.usage-bar-wrap{background:var(--bg-3);border-radius:2px;height:5px;flex:1}
+.usage-bar-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--cyan),var(--purple))}
+
+.plan-change-preview{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;margin-bottom:16px}
+.plan-compare-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.plan-compare-row:last-child{border-bottom:none}
+
+.referral-link-box{background:var(--bg-0);border:1px solid var(--border-hi);border-radius:var(--r-md);padding:10px 14px;font-family:var(--font-m);font-size:11px;color:var(--cyan);cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:space-between}
+.referral-link-box:hover{border-color:var(--cyan);box-shadow:var(--glow-cyan)}
+
+.forecast-chart{display:flex;align-items:flex-end;gap:4px;height:80px;margin-top:10px}
+.forecast-bar{flex:1;border-radius:3px 3px 0 0;transition:opacity .15s;position:relative}
+.forecast-bar:hover{opacity:.75}
+.forecast-bar.projected{opacity:.45;background:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(255,255,255,.1) 3px,rgba(255,255,255,.1) 6px)}
 </style>
 </head>
 <body>
@@ -506,6 +538,9 @@ textarea.input{resize:vertical;min-height:72px}
         <div class="sidebar-item"        id="ms-subscribers"  onclick="merchantTab('subscribers',this)">👥 Subscribers <span class="sidebar-badge">24</span></div>
         <div class="sidebar-item"        id="ms-revenue"      onclick="merchantTab('revenue',this)">📈 Revenue</div>
         <div class="sidebar-item"        id="ms-settings"     onclick="merchantTab('settings',this)">⚙️ Settings</div>
+        <div class="sidebar-item"         id="ms-coupons"   onclick="merchantTab('coupons',this)">🎟️ Coupons</div>
+        <div class="sidebar-item"         id="ms-referrals" onclick="merchantTab('referrals',this)">🎯 Referrals</div>
+        <div class="sidebar-item"         id="ms-payouts"   onclick="merchantTab('payouts',this)">💰 Payouts</div>
         <div class="sidebar-item" style="margin-top:8px" onclick="openCreatePlan()">＋ Create Plan</div>
       </div>
       <div style="padding:12px;border-top:1px solid var(--border)">
@@ -521,6 +556,9 @@ textarea.input{resize:vertical;min-height:72px}
       <div id="m-plans"       style="display:none"></div>
       <div id="m-subscribers" style="display:none"></div>
       <div id="m-revenue"     style="display:none"></div>
+      <div id="m-coupons"     style="display:none"></div>
+      <div id="m-referrals"   style="display:none"></div>
+      <div id="m-payouts"     style="display:none"></div>
       <div id="m-settings"    style="display:none"></div>
     </main>
   </div>
@@ -534,8 +572,12 @@ textarea.input{resize:vertical;min-height:72px}
     <aside class="sidebar">
       <div style="padding:0 8px;flex:1">
         <div class="sidebar-label" style="margin-bottom:6px">MY ACCOUNT</div>
-        <div class="sidebar-item active" id="ds-subs"    onclick="dashTab('subs',this)">📦 My Subscriptions <span class="sidebar-badge">3</span></div>
-        <div class="sidebar-item"        id="ds-history" onclick="dashTab('history',this)">🕐 Payment History</div>
+        <div class="sidebar-item active" id="ds-subs"     onclick="dashTab('subs',this)">📦 My Subscriptions <span class="sidebar-badge">4</span></div>
+        <div class="sidebar-item"         id="ds-history"  onclick="dashTab('history',this)">🕐 Payment History</div>
+        <div class="sidebar-item"         id="ds-usage"    onclick="dashTab('usage',this)">📊 Usage Details</div>
+        <div class="sidebar-item"         id="ds-notif"    onclick="dashTab('notif',this)">🔔 Notifications <span class="sidebar-badge" id="notif-badge" style="background:var(--red-dim);color:var(--red)">2</span></div>
+        <div class="sidebar-item"         id="ds-wallet"   onclick="dashTab('wallet',this)">🔐 Wallet Settings</div>
+        <div class="sidebar-item"         id="ds-referral" onclick="dashTab('referral',this)">🎯 Referrals</div>
         <div class="sidebar-item" onclick="showPage('browse')">🔍 Explore Plans</div>
       </div>
       <div style="padding:12px;border-top:1px solid var(--border)">
@@ -548,7 +590,11 @@ textarea.input{resize:vertical;min-height:72px}
     </aside>
     <main class="page-content">
       <div id="d-subs"></div>
-      <div id="d-history" style="display:none"></div>
+      <div id="d-history"  style="display:none"></div>
+      <div id="d-usage"    style="display:none"></div>
+      <div id="d-notif"    style="display:none"></div>
+      <div id="d-wallet"   style="display:none"></div>
+      <div id="d-referral" style="display:none"></div>
     </main>
   </div>
 </div>
@@ -637,13 +683,18 @@ textarea.input{resize:vertical;min-height:72px}
 // ══════════════════════════════════════════════
 const STATE = {
   connected:   false,
-  wallet:      '',   // 'metamask' | 'okx'
+  wallet:      '',
   address:     '',
-  balance:     247.50,  // USDC demo balance
+  balance:     null,
   activePlan:  null,
   activeSub:   null,
   createInterval: 'Weekly',
   createToken:    'USDC',
+  // V2
+  backupWallet:   '',
+  couponCode:     '',
+  couponValid:    null,
+  changePlanSub:  null,
 }
 
 // Demo plans
@@ -659,9 +710,39 @@ const PLANS = [
 
 // Demo subscriptions
 const USER_SUBS = [
-  {id:101,planId:1,planName:'Premium Newsletter',merchant:'AlphaMedia',price:10,token:'USDC',interval:'Monthly',start:'Mar 1, 2026',next:'May 1, 2026',payments:2,status:'active'},
-  {id:102,planId:2,planName:'SaaS Builder Pro',merchant:'DevTools Inc',price:25,token:'USDC',interval:'Monthly',start:'Mar 15, 2026',next:'Apr 15, 2026',payments:1,status:'paused'},
-  {id:103,planId:3,planName:'Membership Pass',merchant:'CreatorDAO',price:5,token:'USDC',interval:'Weekly',start:'Apr 6, 2026',next:'Apr 27, 2026',payments:2,status:'active'},
+  {id:101,planId:1,planName:'Premium Newsletter',merchant:'AlphaMedia',price:10,token:'USDC',interval:'Monthly',start:'Mar 1, 2026',next:'May 1, 2026',payments:2,status:'active', retryCount:0, gracePeriodEnd:null, usageThisMonth:0},
+  {id:102,planId:2,planName:'SaaS Builder Pro',merchant:'DevTools Inc',price:25,token:'USDC',interval:'Monthly',start:'Mar 15, 2026',next:'Apr 15, 2026',payments:1,status:'paused', retryCount:1, nextRetryAt:'Apr 28, 2026 06:00', gracePeriodEnd:null, usageThisMonth:0},
+  {id:103,planId:3,planName:'Membership Pass',merchant:'CreatorDAO',price:5,token:'USDC',interval:'Weekly',start:'Apr 6, 2026',next:'Apr 27, 2026',payments:2,status:'overdue', retryCount:2, nextRetryAt:'Apr 28, 2026 14:00', gracePeriodEnd:'May 1, 2026', usageThisMonth:0},
+  {id:104,planId:2,planName:'SaaS Builder Pro',merchant:'DevTools Inc',price:25,token:'USDC',interval:'Monthly',start:'Feb 1, 2026',next:'May 1, 2026',payments:3,status:'active', retryCount:0, gracePeriodEnd:null, usageThisMonth:142, usagePricePerUnit:0.01},
+]
+
+// V2 — Coupons
+const DEMO_COUPONS = [
+  {code:'WELCOME20', discount:20, type:'percent', planId:null, uses:47, maxUses:100, expires:'Jun 30, 2026'},
+  {code:'FREE7DAYS', trialExt:7,  type:'trial',   planId:2,   uses:12, maxUses:50,  expires:'May 31, 2026'},
+  {code:'FLAT5OFF',  discount:5,  type:'fixed',   planId:null, uses:8, maxUses:200, expires:null},
+]
+
+// V2 — Referral data
+const DEMO_REFERRALS = [
+  {wallet:'0x1a2b…3c4d', plan:'SaaS Builder Pro', earned:2.5, date:'Apr 10, 2026', tx:'0xabc…'},
+  {wallet:'0x2b3c…4d5e', plan:'Membership Pass',  earned:0.5, date:'Apr 8, 2026',  tx:'0xdef…'},
+  {wallet:'0x3c4d…5e6f', plan:'Premium Newsletter',earned:1.0, date:'Apr 5, 2026',  tx:'0xghi…'},
+]
+
+// V2 — Usage records
+const DEMO_USAGE = [
+  {sub:'SaaS Builder Pro',type:'API Calls',    units:14200, price:0.01,   total:142,   period:'Apr 2026'},
+  {sub:'SaaS Builder Pro',type:'Storage GB',   units:8,     price:0.50,   total:4.00,  period:'Apr 2026'},
+  {sub:'Research Vault',  type:'Seats',        units:3,     price:5.00,   total:15.00, period:'Apr 2026'},
+]
+
+// V2 — Notifications
+const DEMO_NOTIFICATIONS = [
+  {type:'retry_scheduled', msg:'Payment retry #1 scheduled for SaaS Builder Pro.', date:'Apr 27, 2026', read:false},
+  {type:'grace_period',    msg:'Membership Pass payment overdue — 3-day grace period active.', date:'Apr 26, 2026', read:false},
+  {type:'payment_success', msg:'Premium Newsletter payment confirmed. Next billing: May 1, 2026.', date:'Apr 1, 2026', read:true},
+  {type:'trial_ending',    msg:'Your SaaS Builder Pro trial ends in 2 days.', date:'Mar 8, 2026', read:true},
 ]
 
 const PAYMENT_HISTORY = [
@@ -679,6 +760,21 @@ const REVENUE_DATA = [
 ]
 
 // ══════════════════════════════════════════════
+// ── Referral code generator ─────────────────────────────────
+// Generates a deterministic 7-char code (A-Z + 0-9) from a wallet address.
+// Same wallet always gets the same code. Looks like: A3X9KQ2
+function generateReferralCode(address) {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O/0/1/I to avoid confusion
+  var code  = '';
+  var addr  = address.replace('0x','').toLowerCase();
+  // Use pairs of hex chars as seeds for character selection
+  for(var i = 0; i < 7; i++) {
+    var pair  = parseInt(addr.slice(i*2, i*2+2), 16);
+    code += chars[pair % chars.length];
+  }
+  return code;
+}
+
 // ══════════════════════════════════════════════
 // EIP-6963 MULTI-WALLET PROVIDER REGISTRY
 // Each extension announces itself with its own
@@ -877,11 +973,12 @@ async function connectWallet(type) {
     // If alreadyOnArc === true: no popup shown, proceed directly to success
 
     // ── Success ────────────────────────────────────────────────────────────
-    STATE.connected = true
-    STATE.wallet    = type
-    STATE.address   = addr
-    STATE.provider  = provider
-    STATE.balance   = 0  // will be replaced by real on-chain value below
+    STATE.connected    = true
+    STATE.wallet       = type
+    STATE.address      = addr
+    STATE.provider     = provider
+    STATE.balance      = 0  // will be replaced by real on-chain value below
+    STATE.referralCode = generateReferralCode(addr)  // unique 7-char code for this wallet
 
     // Listen for account/chain changes
     provider.on('accountsChanged', accs => {
@@ -1310,6 +1407,14 @@ function openSubscribeModal(planId) {
     <div style="background:var(--cyan-dim);border:1px solid rgba(56,200,240,.2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--cyan);display:flex;gap:10px">
       <span style="flex-shrink:0">ℹ️</span>
       <div>Your wallet will open for confirmation. ${plan.trial>0 ? `<strong>${plan.trial}-day free trial</strong> — your wallet confirms the subscription but <strong>no charge today</strong>. First payment of ${plan.price} ${plan.token} begins after the trial.` : `Once approved, <strong>${plan.price} ${plan.token}</strong> will be sent directly to the merchant on Arc.`}</div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label class="field-label" style="display:block;margin-bottom:6px">Promo Code (optional)</label>
+      <div class="coupon-input-row">
+        <input class="input" id="coupon-field" placeholder="e.g. WELCOME20" oninput="STATE.couponCode=this.value;STATE.couponValid=null;document.getElementById('coupon-status').innerHTML=''">
+        <button class="btn-ghost" onclick="validateCoupon()">Apply</button>
+      </div>
+      <div id="coupon-status"></div>
     </div>
     <div style="background:var(--bg-0);border:1px solid var(--border);border-radius:var(--r-md);padding:14px;margin-bottom:18px">
       <div class="breakdown-row"><span style="color:var(--text-1)">Plan price</span><span style="font-family:var(--font-m);font-size:12px">${plan.price}.00 ${plan.token}</span></div>
@@ -1889,6 +1994,553 @@ document.addEventListener('keydown', e => {
 // INIT
 // ══════════════════════════════════════════════
 showPage('landing')
+
+
+
+
+// ═══════════════════════════════════════════════════════════
+// V2 — Extended tab routing
+// ═══════════════════════════════════════════════════════════
+
+function dashTab(id, el) {
+  ['d-subs','d-history','d-usage','d-notif','d-wallet','d-referral'].forEach(function(t){
+    var e = document.getElementById(t); if(e) e.style.display='none';
+  });
+  var target = document.getElementById('d-'+id);
+  if(target) target.style.display='';
+  document.querySelectorAll('#page-dashboard .sidebar-item').forEach(function(s){s.classList.remove('active');});
+  if(el) el.classList.add('active');
+  if(id==='subs')     renderDSubs();
+  if(id==='history')  renderDHistory();
+  if(id==='usage')    renderUsageTab();
+  if(id==='notif')    renderNotificationsTab();
+  if(id==='wallet')   renderWalletSettingsTab();
+  if(id==='referral') renderReferralTab();
+}
+
+function merchantTab(id, el) {
+  ['m-overview','m-plans','m-subscribers','m-revenue','m-coupons','m-referrals','m-payouts','m-settings'].forEach(function(t){
+    var e = document.getElementById(t); if(e) e.style.display='none';
+  });
+  var target = document.getElementById('m-'+id);
+  if(target) target.style.display='';
+  document.querySelectorAll('#page-merchant .sidebar-item').forEach(function(s){s.classList.remove('active');});
+  if(el) el.classList.add('active');
+  if(id==='overview')    renderMOverview();
+  if(id==='plans')       renderMPlans();
+  if(id==='subscribers') renderMSubscribers();
+  if(id==='revenue')     renderMRevenueV2();
+  if(id==='coupons')     renderMCoupons();
+  if(id==='referrals')   renderMReferrals();
+  if(id==='payouts')     renderMPayouts();
+  if(id==='settings')    renderMSettings();
+}
+
+// ── Pause / Resume ────────────────────────────────────────────
+function pauseSubDemo(subId) {
+  var sub = USER_SUBS.find(function(s){return s.id===subId;});
+  if(!sub) return;
+  sub.status = 'paused';
+  sub.pausedAt = new Date().toISOString();
+  toast('Paused', sub.planName+' paused — access retained until next billing date', '⏸');
+  renderDSubs();
+}
+
+function resumeSubDemo(subId) {
+  var sub = USER_SUBS.find(function(s){return s.id===subId;});
+  if(!sub) return;
+  sub.status = 'active';
+  sub.pausedAt = null;
+  sub.next = nextPaymentLabel(sub.interval);
+  toast('Resumed', sub.planName+' resumed — next billing: '+sub.next, '▶');
+  renderDSubs();
+}
+
+// ── Coupon validation ─────────────────────────────────────────
+function validateCoupon() {
+  var code   = (document.getElementById('coupon-field')||{value:''}).value.trim().toUpperCase();
+  var status = document.getElementById('coupon-status');
+  if(!code || !status) return;
+  var coupon = DEMO_COUPONS.find(function(c){return c.code===code;});
+  if(!coupon) {
+    status.innerHTML = '<div class="coupon-err">&#10007; Invalid or expired coupon code</div>';
+    STATE.couponValid = null;
+    return;
+  }
+  STATE.couponValid = coupon;
+  var desc = coupon.type==='percent' ? coupon.discount+'% off' :
+             coupon.type==='fixed'   ? '$'+coupon.discount+' off' :
+             '+'+coupon.trialExt+' days trial';
+  status.innerHTML = '<div class="coupon-ok">&#10003; Applied: '+desc+' ('+coupon.uses+'/'+(coupon.maxUses||'&#8734;')+' uses)</div>';
+  toast('Coupon applied!', desc, '&#127999;');
+}
+
+// ── Extended renderDSubs with V2 badges ───────────────────────
+function renderDSubs() {
+  var el = document.getElementById('d-subs');
+  if(!el) return;
+  var active = USER_SUBS.filter(function(s){return s.status!=='cancelled';});
+  var spend  = active.reduce(function(a,s){return a+s.price;}, 0);
+
+  var statsHtml = '<div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:24px">'
+    + statCard('Active Plans',    String(active.filter(function(s){return s.status==='active';}).length), '', '', 'linear-gradient(90deg,transparent,var(--cyan),transparent)', 'var(--cyan)')
+    + statCard('Monthly Spend',   '$'+spend.toFixed(2), '', '', 'linear-gradient(90deg,transparent,var(--gold),transparent)', 'var(--gold)')
+    + statCard('USDC Balance',    fmtBalance(STATE.balance), 'Live', '', 'linear-gradient(90deg,transparent,var(--green),transparent)', 'var(--green)')
+    + statCard('Notifications',   String(DEMO_NOTIFICATIONS.filter(function(n){return !n.read;}).length)+' unread', '', '', 'linear-gradient(90deg,transparent,var(--red),transparent)', 'var(--red)')
+    + '</div>';
+
+  var cards = USER_SUBS.map(function(sub) {
+    var plan        = PLANS.find(function(p){return p.id===sub.planId;});
+    var color       = plan ? plan.color : 'var(--cyan)';
+    var isCancelled = sub.status==='cancelled';
+    var isOverdue   = sub.status==='overdue';
+    var isPaused    = sub.status==='paused';
+    var badgeMap    = {active:'badge-active',paused:'badge-paused',overdue:'badge-overdue',suspended:'badge-suspended',cancelled:'badge-cancelled'};
+    var badgeCls    = badgeMap[sub.status] || 'badge-inactive';
+
+    var retryHtml  = sub.retryCount > 0
+      ? '<div class="retry-bar">&#9201; <div><strong>Retry '+sub.retryCount+'/3 scheduled</strong> &mdash; Next attempt: '+sub.nextRetryAt+'</div></div>'
+      : '';
+    var graceHtml  = sub.gracePeriodEnd
+      ? '<div class="grace-bar">&#9888;&#65039; <div><strong>Grace period active</strong> &mdash; Suspends after '+sub.gracePeriodEnd+'</div></div>'
+      : '';
+    var usageHtml  = sub.usageThisMonth > 0
+      ? '<div style="background:var(--cyan-dim);border:1px solid rgba(56,200,240,.2);border-radius:var(--r-md);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--cyan);display:flex;justify-content:space-between"><span>&#128202; Usage: '+sub.usageThisMonth+' API calls</span><span>+$'+(sub.usageThisMonth*sub.usagePricePerUnit).toFixed(2)+' USDC</span></div>'
+      : '';
+
+    var tlItems = [
+      ['Amount',   '$'+sub.price+' '+sub.token, color],
+      ['Interval', sub.interval,                'var(--text-0)'],
+      ['Started',  sub.start,                   'var(--text-0)'],
+      ['Next',     sub.next,                    isOverdue?'var(--gold)':'var(--text-0)'],
+      ['Payments', String(sub.payments),         'var(--green)']
+    ];
+    var tlHtml = tlItems.map(function(item) {
+      return '<div class="sub-tl-item"><div class="sub-tl-label">'+item[0]+'</div><div class="sub-tl-val" style="color:'+item[2]+'">'+item[1]+'</div></div>';
+    }).join('');
+
+    var btnHtml = '';
+    if(!isCancelled) {
+      if(sub.status==='active')   btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Pay Next Cycle</button>';
+      if(isOverdue||isPaused)     btnHtml += '<button class="btn-primary" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Retry Payment &rarr;</button>';
+      if(sub.status==='active')   btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="openChangePlanModal('+sub.id+')">&#128260; Change Plan</button>';
+      if(sub.status==='active')   btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="pauseSubDemo('+sub.id+')">&#9208; Pause</button>';
+      if(isPaused)                btnHtml += '<button class="btn-primary" style="font-size:12px" onclick="resumeSubDemo('+sub.id+')">&#9654; Resume</button>';
+      btnHtml += '<button class="btn-danger" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Cancel</button>';
+    } else {
+      btnHtml = '<div style="font-family:var(--font-m);font-size:11px;color:var(--text-2)">Subscription cancelled.</div>';
+    }
+
+    return '<div style="background:var(--bg-1);border:1px solid '+(isOverdue?'rgba(240,184,64,.3)':isPaused?'var(--border-hi)':'var(--border)')+';border-radius:var(--r-lg);padding:24px;opacity:'+(isCancelled?'.6':'1')+'">'
+      + '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">'
+      + '<div><div style="font-family:var(--font-d);font-weight:600;font-size:17px;margin-bottom:3px">'+sub.planName+'</div>'
+      + '<div style="font-family:var(--font-m);font-size:11px;color:var(--text-2)">Sub #'+sub.id+' &middot; '+sub.merchant+'</div></div>'
+      + '<span class="badge '+badgeCls+'">'+sub.status+'</span></div>'
+      + retryHtml + graceHtml + usageHtml
+      + '<div class="sub-timeline">'+tlHtml+'</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'+btnHtml+'</div>'
+      + '</div>';
+  }).join('');
+
+  el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px">'
+    + '<div><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">My Subscriptions</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Manage your plans on Arc</p></div>'
+    + '<button class="btn-secondary" onclick="showPage(\'browse\')">+ Find Plans</button></div>'
+    + statsHtml
+    + '<div style="display:flex;flex-direction:column;gap:16px">'+cards+'</div>';
+}
+
+// ── Usage tab ─────────────────────────────────────────────────
+function renderUsageTab() {
+  var el = document.getElementById('d-usage');
+  if(!el) return;
+  var total = DEMO_USAGE.reduce(function(a,u){return a+u.total;}, 0);
+  var rows = DEMO_USAGE.map(function(u) {
+    var pct = Math.min(100, (u.units/200)*100);
+    return '<div style="display:flex;align-items:center;padding:14px 0;border-bottom:1px solid var(--border);gap:16px">'
+      + '<div style="flex:1">'
+      + '<div style="font-size:13px;font-weight:500;margin-bottom:3px">'+u.sub+' &mdash; '+u.type+'</div>'
+      + '<div style="font-family:var(--font-m);font-size:11px;color:var(--text-2)">'+u.units.toLocaleString()+' units &times; $'+u.price+'/unit</div>'
+      + '<div style="margin-top:8px;display:flex;align-items:center;gap:8px">'
+      + '<div class="usage-bar-wrap"><div class="usage-bar-fill" style="width:'+pct+'%"></div></div>'
+      + '<span style="font-family:var(--font-m);font-size:10px;color:var(--text-2)">'+u.units+'</span></div></div>'
+      + '<div style="font-family:var(--font-m);font-size:14px;color:var(--gold);flex-shrink:0">+$'+u.total.toFixed(2)+'</div></div>';
+  }).join('');
+  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Usage Details</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Metered billing breakdown &mdash; Apr 2026</p></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">Usage Records</span>'
+    + '<span style="font-family:var(--font-m);font-size:12px;color:var(--text-2)">Apr 2026</span></div>'
+    + '<div style="padding:8px 20px">'+rows
+    + '<div style="display:flex;justify-content:space-between;padding:14px 0;font-family:var(--font-m);font-size:14px;font-weight:500;color:var(--cyan)">'
+    + '<span>Total Usage Charges</span><span>+$'+total.toFixed(2)+' USDC</span></div></div></div>';
+}
+
+// ── Notifications tab ─────────────────────────────────────────
+function renderNotificationsTab() {
+  var el = document.getElementById('d-notif');
+  if(!el) return;
+  var iconMap = {retry_scheduled:'&#9201;', grace_period:'&#9888;&#65039;', payment_success:'&#9989;', trial_ending:'&#128276;', payment_failed:'&#10060;'};
+  var items = DEMO_NOTIFICATIONS.map(function(n, i) {
+    var icon = iconMap[n.type] || '&middot;';
+    return '<div class="'+(n.read?'':'notif-unread')+'" style="display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid var(--border)">'
+      + (!n.read ? '<div class="notif-dot"></div>' : '<div style="width:7px;flex-shrink:0"></div>')
+      + '<div style="flex:1">'
+      + '<div style="font-size:13px;font-weight:'+(n.read?400:600)+';margin-bottom:3px">'+icon+' '+n.msg+'</div>'
+      + '<div style="font-family:var(--font-m);font-size:11px;color:var(--text-2)">'+n.date+'</div></div>'
+      + (!n.read ? '<button class="btn-ghost" style="font-size:10px;padding:3px 8px" onclick="DEMO_NOTIFICATIONS['+i+'].read=true;renderNotificationsTab()">Dismiss</button>' : '')
+      + '</div>';
+  }).join('');
+  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Notifications</h1></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">All Notifications</span>'
+    + '<button class="btn-ghost" style="font-size:11px" onclick="DEMO_NOTIFICATIONS.forEach(function(n){n.read=true;});var b=document.getElementById(\'notif-badge\');if(b)b.textContent=\'0\';renderNotificationsTab()">Mark all read</button></div>'
+    + '<div style="padding:8px 20px">'+items+'</div></div>';
+}
+
+// ── Wallet Settings tab ───────────────────────────────────────
+function renderWalletSettingsTab() {
+  var el = document.getElementById('d-wallet');
+  if(!el) return;
+  var addrDisplay = STATE.connected ? STATE.address.slice(0,10)+'&hellip;'+STATE.address.slice(-6) : 'Not connected';
+  var backupSection = STATE.backupWallet
+    ? '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:12px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md)">'
+      + '<span class="addr-chip">'+STATE.backupWallet+'</span>'
+      + '<button class="btn-danger" style="font-size:11px" onclick="STATE.backupWallet=\'\';renderWalletSettingsTab();toast(\'Removed\',\'Backup wallet removed\',\'&#128308;\')">Remove</button></div>'
+    : '<p style="font-size:13px;color:var(--text-1);margin-bottom:14px">No backup wallet set. Add one to prevent subscription interruptions.</p>';
+  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Wallet Settings</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Manage primary and backup wallets</p></div>'
+    + '<div class="card" style="max-width:560px;margin-bottom:16px"><div class="card-header"><span class="card-title">Primary Wallet</span></div>'
+    + '<div style="padding:18px 22px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--text-1)">Connected</span><span class="addr-chip">'+addrDisplay+'</span></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;font-size:13px"><span style="color:var(--text-1)">Balance</span><span style="font-family:var(--font-m);color:var(--green)">'+fmtBalance(STATE.balance)+'</span></div>'
+    + '</div></div>'
+    + '<div class="card" style="max-width:560px"><div class="card-header"><span class="card-title">Backup Wallet</span>'
+    + '<span style="font-size:11px;color:var(--text-1)">Used if primary has insufficient balance</span></div>'
+    + '<div style="padding:18px 22px">'+backupSection
+    + '<div style="display:flex;gap:8px"><input class="input" id="backup-wallet-input" placeholder="0x&hellip; backup wallet address">'
+    + '<button class="btn-primary" style="flex-shrink:0" onclick="setBackupWalletDemo()">Set Backup</button></div></div></div>';
+}
+
+function setBackupWalletDemo() {
+  var val = (document.getElementById('backup-wallet-input')||{value:''}).value.trim();
+  if(!val || val.length !== 42) { toast('Invalid','Enter a valid 42-char wallet address','&#9888;&#65039;'); return; }
+  STATE.backupWallet = val;
+  toast('Backup set', val.slice(0,10)+'&hellip; added as backup wallet', '&#128272;');
+  renderWalletSettingsTab();
+}
+
+// ── Referral tab (user) ───────────────────────────────────────
+function renderReferralTab() {
+  var el = document.getElementById('d-referral');
+  if(!el) return;
+
+  // Use the stored referral code (generated from wallet address on connect)
+  // Falls back to a placeholder if not connected
+  var refCode = STATE.referralCode || (STATE.address ? generateReferralCode(STATE.address) : null);
+  var refLink = refCode ? 'https://arcsub.app/ref/' + refCode : null;
+
+  var rows = DEMO_REFERRALS.map(function(r) {
+    return '<tr><td class="td-mono">'+r.wallet+'</td><td>'+r.plan+'</td>'
+      + '<td class="td-mono" style="color:var(--gold)">+$'+r.earned+' USDC</td>'
+      + '<td style="font-size:12px;color:var(--text-1)">'+r.date+'</td>'
+      + '<td><a href="https://testnet.arcscan.app/tx/'+r.tx+'" target="_blank" style="color:var(--cyan);font-family:var(--font-m);font-size:11px">'+r.tx+' &#8599;</a></td></tr>';
+  }).join('');
+
+  // Referral code / link section
+  var codeSection;
+  if(!STATE.connected || !refCode) {
+    codeSection = '<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);padding:28px;text-align:center">'
+      + '<div style="font-size:32px;margin-bottom:12px;opacity:.4">&#128279;</div>'
+      + '<div style="font-family:var(--font-d);font-weight:600;font-size:16px;margin-bottom:8px">Connect your wallet to get your referral code</div>'
+      + '<p style="font-size:13px;color:var(--text-1)">Your unique code is automatically generated when you connect.</p>'
+      + '</div>';
+  } else {
+    codeSection = '<div class="card" style="margin-bottom:16px">'
+      + '<div class="card-header"><span class="card-title">Your Referral Code &amp; Link</span></div>'
+      + '<div style="padding:20px 22px">'
+      + '<p style="font-size:13px;color:var(--text-1);margin-bottom:16px">Share your code or link. Earn USDC commission on every first payment from a referred subscriber.</p>'
+      // Big code display
+      + '<div style="background:var(--bg-0);border:1px solid var(--border-hi);border-radius:var(--r-lg);padding:20px 24px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">'
+      + '<div>'
+      + '<div style="font-family:var(--font-m);font-size:10px;color:var(--text-2);letter-spacing:1px;margin-bottom:8px">YOUR REFERRAL CODE</div>'
+      + '<div style="font-family:var(--font-m);font-size:32px;font-weight:500;color:var(--cyan);letter-spacing:4px">'+refCode+'</div>'
+      + '</div>'
+      + '<button class="btn-primary" style="flex-shrink:0" onclick="navigator.clipboard.writeText(\''+refCode+'\');toast(\'Code Copied!\',\''+refCode+' copied to clipboard\',\'&#128203;\')">Copy Code</button>'
+      + '</div>'
+      // Full link
+      + '<div class="referral-link-box" onclick="navigator.clipboard.writeText(\''+refLink+'\');toast(\'Link Copied!\',\'Referral link copied to clipboard\',\'&#128203;\')">'
+      + '<span style="font-family:var(--font-m);font-size:11px;overflow:hidden;text-overflow:ellipsis">'+refLink+'</span>'
+      + '<span style="color:var(--text-2);font-size:11px;flex-shrink:0;margin-left:12px">&#128203; Copy link</span>'
+      + '</div>'
+      + '<div style="margin-top:12px;font-family:var(--font-m);font-size:11px;color:var(--text-2)">'
+      + 'Code is unique to your wallet address and permanent. Every subscriber who uses it links back to you.'
+      + '</div>'
+      + '</div></div>';
+  }
+
+  el.innerHTML = '<div style="margin-bottom:26px">'
+    + '<h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Referrals</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Earn USDC for every subscriber you refer</p></div>'
+    + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
+    + statCard('Total Earned','$4.00','All time','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
+    + statCard('Referrals','3','','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
+    + statCard('Pending','$1.50','Unlocks next payment','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
+    + '</div>'
+    + codeSection
+    + '<div class="card"><div class="card-header"><span class="card-title">Referral History</span></div>'
+    + '<div style="overflow-x:auto"><table class="data-table"><thead><tr>'
+    + '<th>Referred Wallet</th><th>Plan</th><th>Earned</th><th>Date</th><th>Tx</th>'
+    + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+
+
+// ── Change Plan modal ─────────────────────────────────────────
+function openChangePlanModal(subId) {
+  var sub = USER_SUBS.find(function(s){return s.id===subId;});
+  if(!sub) return;
+  STATE.changePlanSub = subId;
+  var currentPlan = PLANS.find(function(p){return p.id===sub.planId;});
+  var others      = PLANS.filter(function(p){return p.id!==sub.planId && p.token===sub.token;});
+
+  var planCards = others.map(function(p) {
+    var isUpgrade    = p.price > (currentPlan ? currentPlan.price : 0);
+    var diff         = Math.abs(p.price - (currentPlan ? currentPlan.price : 0));
+    var proratedEst  = (diff * 15 / 30).toFixed(2);
+    return '<div class="plan-change-preview" onclick="confirmPlanChange('+p.id+')" style="cursor:pointer" '
+      + 'onmouseenter="this.style.borderColor=\'var(--border-hi)\'" onmouseleave="this.style.borderColor=\'var(--border)\'">'
+      + '<div class="plan-compare-row"><span style="color:var(--text-1)">Plan</span><span style="font-weight:500">'+p.name+'</span></div>'
+      + '<div class="plan-compare-row"><span style="color:var(--text-1)">Price</span><span style="font-family:var(--font-m);color:var(--cyan)">$'+p.price+'/'+p.interval.toLowerCase()+'</span></div>'
+      + '<div class="plan-compare-row"><span style="color:var(--text-1)">Type</span><span class="badge '+(isUpgrade?'badge-active':'badge-paused')+'">'+(isUpgrade?'UPGRADE':'DOWNGRADE')+'</span></div>'
+      + '<div class="plan-compare-row"><span style="color:var(--text-1)">'+(isUpgrade?'Charge today':'Effective')+'</span>'
+      + '<span style="font-family:var(--font-m);font-size:12px;color:'+(isUpgrade?'var(--red)':'var(--green)')+'">'+( isUpgrade ? '~$'+proratedEst+' USDC (prorated)' : 'Next billing cycle')+'</span></div></div>';
+  }).join('');
+
+  var inner = '<div style="padding:24px 28px 0;display:flex;justify-content:space-between;align-items:flex-start">'
+    + '<div><div style="font-family:var(--font-d);font-weight:700;font-size:20px;letter-spacing:-.5px">Change Plan</div>'
+    + '<div style="font-family:var(--font-m);font-size:11px;color:var(--text-2);margin-top:3px">Current: '+sub.planName+' &middot; $'+sub.price+'/mo</div></div>'
+    + '<button class="modal-close" onclick="closeModal(\'modal-change-plan\')">&#215;</button></div>'
+    + '<div style="padding:20px 28px 28px">'
+    + '<div class="notice gold">Upgrades apply immediately with prorated charge. Downgrades take effect at next billing cycle.</div>'
+    + planCards
+    + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">'
+    + '<button class="btn-ghost" onclick="closeModal(\'modal-change-plan\')">Cancel</button></div></div>';
+
+  var modal = document.getElementById('modal-change-plan');
+  if(!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-change-plan';
+    modal.style.display = 'none';
+    modal.innerHTML = '<div class="modal-overlay" onclick="if(event.target===this)closeModal(\'modal-change-plan\')"><div class="modal" style="max-width:480px" id="change-plan-inner"></div></div>';
+    document.getElementById('app').appendChild(modal);
+  }
+  document.getElementById('change-plan-inner').innerHTML = inner;
+  modal.style.display = '';
+}
+
+function confirmPlanChange(newPlanId) {
+  var subId   = STATE.changePlanSub;
+  var sub     = USER_SUBS.find(function(s){return s.id===subId;});
+  var newPlan = PLANS.find(function(p){return p.id===newPlanId;});
+  if(!sub || !newPlan) return;
+  var isUpgrade = newPlan.price > sub.price;
+  closeModal('modal-change-plan');
+  sub.planId   = newPlanId;
+  sub.planName = newPlan.name;
+  sub.price    = newPlan.price;
+  sub.interval = newPlan.interval;
+  toast(isUpgrade ? 'Plan upgraded!' : 'Downgrade scheduled',
+        isUpgrade ? 'Now on '+newPlan.name : newPlan.name+' takes effect next cycle',
+        isUpgrade ? '&#128316;' : '&#128317;');
+  renderDSubs();
+}
+
+// ── Merchant Coupons tab ──────────────────────────────────────
+function renderMCoupons() {
+  var el = document.getElementById('m-coupons');
+  if(!el) return;
+  var rows = DEMO_COUPONS.map(function(c) {
+    var discount = c.type==='percent' ? c.discount+'%' : c.type==='fixed' ? '$'+c.discount : '+'+c.trialExt+'d trial';
+    return '<tr><td><code style="font-family:var(--font-m);color:var(--cyan);font-size:12px">'+c.code+'</code></td>'
+      + '<td style="font-size:12px">'+c.type+'</td><td class="td-mono">'+discount+'</td>'
+      + '<td class="td-mono">'+c.uses+'/'+(c.maxUses||'&#8734;')+'</td>'
+      + '<td style="font-size:12px;color:var(--text-1)">'+(c.expires||'Never')+'</td>'
+      + '<td><span class="badge badge-active">active</span></td>'
+      + '<td><button class="btn-danger" style="font-size:11px;padding:4px 8px" onclick="deactivateCoupon(\''+c.code+'\')">Deactivate</button></td></tr>';
+  }).join('');
+  el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px">'
+    + '<div><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Coupons &amp; Promo Codes</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Create discount codes for your subscribers</p></div>'
+    + '<button class="btn-primary" onclick="toggleCouponForm()">+ Create Coupon</button></div>'
+    + '<div id="coupon-create-form" style="display:none;background:var(--bg-1);border:1px solid var(--border-hi);border-radius:var(--r-lg);padding:24px;margin-bottom:20px">'
+    + '<h2 style="font-family:var(--font-d);font-weight:600;font-size:18px;margin-bottom:18px">New Coupon</h2>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'
+    + '<div><label class="field-label" style="display:block;margin-bottom:6px">Coupon Code *</label>'
+    + '<input class="input" id="cc-code" placeholder="e.g. SUMMER30" maxlength="20" oninput="this.value=this.value.toUpperCase()"></div>'
+    + '<div><label class="field-label" style="display:block;margin-bottom:6px">Type *</label>'
+    + '<select class="input" id="cc-type" onchange="syncCouponTypeLabel()">'
+    + '<option value="percent">Percentage discount</option>'
+    + '<option value="fixed">Fixed amount off (USDC)</option>'
+    + '<option value="trial">Free trial extension</option>'
+    + '</select></div>'
+    + '<div id="cc-val-wrap"><label class="field-label" style="display:block;margin-bottom:6px"><span id="cc-val-lbl">Discount %</span> *</label>'
+    + '<input class="input" id="cc-value" type="number" min="1" placeholder="20"></div>'
+    + '<div><label class="field-label" style="display:block;margin-bottom:6px">Max Uses (0 = unlimited)</label>'
+    + '<input class="input" id="cc-max" type="number" min="0" value="0"></div>'
+    + '<div><label class="field-label" style="display:block;margin-bottom:6px">Expiry Date (optional)</label>'
+    + '<input class="input" id="cc-expiry" type="date"></div>'
+    + '</div>'
+    + '<div id="cc-error" style="display:none;background:var(--red-dim);border:1px solid rgba(240,80,96,.25);border-radius:var(--r-md);padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:12px"></div>'
+    + '<div style="display:flex;gap:10px;justify-content:flex-end">'
+    + '<button class="btn-ghost" onclick="toggleCouponForm()">Cancel</button>'
+    + '<button class="btn-primary" onclick="submitCreateCoupon()">Create Coupon</button></div></div>'
+    + '<div class="card"><div class="table-wrap"><table class="data-table"><thead><tr>'
+    + '<th>Code</th><th>Type</th><th>Discount</th><th>Uses</th><th>Expires</th><th>Status</th><th></th>'
+    + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+
+function toggleCouponForm() {
+  var form = document.getElementById('coupon-create-form');
+  if(form) form.style.display = (form.style.display==='none'||form.style.display==='') ? 'block' : 'none';
+}
+
+function syncCouponTypeLabel() {
+  var type = document.getElementById('cc-type') ? document.getElementById('cc-type').value : 'percent';
+  var lbl  = document.getElementById('cc-val-lbl');
+  var wrap = document.getElementById('cc-val-wrap');
+  if(type==='trial') { if(wrap) wrap.style.display='none'; return; }
+  if(wrap) wrap.style.display='';
+  if(lbl) lbl.textContent = type==='percent' ? 'Discount %' : 'Amount Off (USDC)';
+}
+
+function submitCreateCoupon() {
+  var code   = document.getElementById('cc-code')   ? document.getElementById('cc-code').value.trim().toUpperCase()   : '';
+  var type   = document.getElementById('cc-type')   ? document.getElementById('cc-type').value                          : 'percent';
+  var value  = document.getElementById('cc-value')  ? parseFloat(document.getElementById('cc-value').value)||0          : 0;
+  var max    = document.getElementById('cc-max')    ? parseInt(document.getElementById('cc-max').value)||0               : 0;
+  var expiry = document.getElementById('cc-expiry') ? document.getElementById('cc-expiry').value                         : '';
+  var errEl  = document.getElementById('cc-error');
+  function showErr(msg) { if(errEl){errEl.textContent=msg;errEl.style.display='';} }
+
+  if(!code || code.length < 3)  { showErr('Coupon code must be at least 3 characters.'); return; }
+  if(DEMO_COUPONS.find(function(c){return c.code===code;})) { showErr('That code already exists.'); return; }
+  if((type==='percent'||type==='fixed') && value<=0) { showErr('Enter a valid discount value greater than 0.'); return; }
+  if(type==='percent' && value>100) { showErr('Percentage discount cannot exceed 100%.'); return; }
+  if(errEl) errEl.style.display='none';
+
+  DEMO_COUPONS.push({
+    code:     code,
+    type:     type,
+    discount: (type==='trial') ? 0 : value,
+    trialExt: (type==='trial') ? 7 : 0,
+    uses:     0,
+    maxUses:  max,
+    expires:  expiry ? new Date(expiry).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : null
+  });
+
+  var inputs = ['cc-code','cc-value','cc-max','cc-expiry'];
+  inputs.forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  toggleCouponForm();
+  renderMCoupons();
+  toast('Coupon Created!', code+' is now active', '&#127999;');
+}
+
+function deactivateCoupon(code) {
+  var idx = DEMO_COUPONS.findIndex(function(c){return c.code===code;});
+  if(idx>=0) { DEMO_COUPONS.splice(idx,1); renderMCoupons(); toast('Coupon removed', code+' deactivated','&#128308;'); }
+}
+
+// ── Merchant Referrals tab ────────────────────────────────────
+function renderMReferrals() {
+  var el = document.getElementById('m-referrals');
+  if(!el) return;
+  var rows = DEMO_REFERRALS.map(function(r) {
+    var code = r.wallet ? generateReferralCode(r.wallet.replace('0x','').replace('…','aabbccdd')) : '-------';
+    return '<tr><td class="td-mono">'+r.wallet+'</td>'
+      + '<td><code style="font-family:var(--font-m);color:var(--cyan);font-size:12px;letter-spacing:2px">'+code+'</code></td>'
+      + '<td>'+r.plan+'</td>'
+      + '<td class="td-mono" style="color:var(--gold)">$'+r.earned+' USDC</td>'
+      + '<td style="font-size:12px;color:var(--text-1)">'+r.date+'</td>'
+      + '<td><a href="https://testnet.arcscan.app/tx/'+r.tx+'" target="_blank" style="color:var(--cyan);font-family:var(--font-m);font-size:11px">'+r.tx+' &#8599;</a></td></tr>';
+  }).join('');
+  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Referral Program</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Incentivise word-of-mouth growth</p></div>'
+    + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
+    + statCard('Total Referrals','3','','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
+    + statCard('Commissions Paid','$4.00','USDC','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
+    + statCard('Conv. Rate','33%','1 in 3 converts','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
+    + '</div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">Referral Events</span></div>'
+    + '<div class="table-wrap"><table class="data-table"><thead><tr><th>Referrer</th><th>Code</th><th>Plan</th><th>Reward</th><th>Date</th><th>Tx</th></tr></thead>'
+    + '<tbody>'+rows+'</tbody></table></div></div>';
+}
+
+// ── Merchant Payouts tab ──────────────────────────────────────
+function renderMPayouts() {
+  var el = document.getElementById('m-payouts');
+  if(!el) return;
+  var DEMO_PAYOUTS = [
+    {date:'Apr 1, 2026',  sub:'0x1a2b&hellip;', plan:'Premium Newsletter', gross:10,  merch:9.50,   plat:0.50,  aff:0,    tx:'0xabc&hellip;'},
+    {date:'Apr 1, 2026',  sub:'0x2b3c&hellip;', plan:'SaaS Builder Pro',   gross:25,  merch:23.75,  plat:1.25,  aff:0,    tx:'0xdef&hellip;'},
+    {date:'Apr 6, 2026',  sub:'0x3c4d&hellip;', plan:'Membership Pass',    gross:5,   merch:4.50,   plat:0.25,  aff:0.25, tx:'0xghi&hellip;'},
+    {date:'Apr 13, 2026', sub:'0x4d5e&hellip;', plan:'Research Vault',     gross:199, merch:189.05, plat:9.95,  aff:0,    tx:'0xjkl&hellip;'},
+  ];
+  var rows = DEMO_PAYOUTS.map(function(p) {
+    return '<tr><td style="font-size:12px;color:var(--text-1)">'+p.date+'</td>'
+      + '<td class="td-mono">'+p.sub+'</td><td style="font-size:12px">'+p.plan+'</td>'
+      + '<td class="td-mono">$'+p.gross+'</td>'
+      + '<td class="td-mono" style="color:var(--green)">$'+p.merch+'</td>'
+      + '<td class="td-mono" style="color:var(--text-2)">$'+p.plat+'</td>'
+      + '<td><a href="https://testnet.arcscan.app/tx/'+p.tx+'" target="_blank" style="color:var(--cyan);font-family:var(--font-m);font-size:11px">'+p.tx+' &#8599;</a></td></tr>';
+  }).join('');
+  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Payout History</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Revenue split log &mdash; every payment on-chain</p></div>'
+    + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
+    + statCard('Your Share','$226.80','95% of gross','up','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
+    + statCard('Platform Fee','$11.95','2.5% avg','','linear-gradient(90deg,transparent,var(--text-2),transparent)','var(--text-2)')
+    + statCard('Affiliate','$0.25','Paid to partners','','linear-gradient(90deg,transparent,var(--purple),transparent)','var(--purple)')
+    + '</div>'
+    + '<div class="card"><div class="table-wrap"><table class="data-table"><thead><tr>'
+    + '<th>Date</th><th>Subscriber</th><th>Plan</th><th>Gross</th><th>You Got</th><th>Platform</th><th>Tx</th>'
+    + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+}
+
+// ── Revenue V2 with forecast ──────────────────────────────────
+function renderMRevenueV2() {
+  renderMRevenue();  // run original first
+  var el = document.getElementById('m-revenue');
+  if(!el) return;
+  var FORECAST = [
+    {m:'Nov',v:320,proj:false},{m:'Dec',v:390,proj:false},{m:'Jan',v:540,proj:false},
+    {m:'Feb',v:620,proj:false},{m:'Mar',v:755,proj:false},{m:'Apr',v:847,proj:false},
+    {m:'May',v:920,proj:true}, {m:'Jun',v:1010,proj:true},{m:'Jul',v:1090,proj:true},
+  ];
+  var maxV = Math.max.apply(null, FORECAST.map(function(d){return d.v;}));
+  var bars = FORECAST.map(function(d) {
+    var h = ((d.v/maxV)*100).toFixed(1);
+    var bg = d.proj ? 'var(--purple)' : 'linear-gradient(180deg,var(--cyan),rgba(56,200,240,.3))';
+    var opacity = d.proj ? 'opacity:.45;' : '';
+    return '<div class="bar-wrap"><div style="flex:1;width:100%;display:flex;align-items:flex-end">'
+      + '<div style="width:100%;height:'+h+'%;min-height:4px;border-radius:4px 4px 0 0;background:'+bg+';'+opacity+'" title="'+d.m+': $'+d.v+(d.proj?' (projected)':'')+'"></div>'
+      + '</div><div class="bar-label">'+d.m+'</div></div>';
+  }).join('');
+  el.innerHTML += '<div class="card" style="margin-top:16px">'
+    + '<div class="card-header"><span class="card-title">Revenue Forecast &mdash; next 3 months</span>'
+    + '<span style="font-family:var(--font-m);font-size:11px;color:var(--text-2)">Dashed = projected</span></div>'
+    + '<div style="padding:22px"><div class="bar-chart">'+bars+'</div>'
+    + '<div style="display:flex;gap:16px;margin-top:12px;font-family:var(--font-m);font-size:11px;color:var(--text-2)">'
+    + '<span style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:10px;background:var(--cyan);border-radius:2px"></div>Actual</span>'
+    + '<span style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:10px;background:var(--purple);opacity:.45;border-radius:2px"></div>Projected</span>'
+    + '</div></div></div>';
+}
+
+// ── Override renderMerchant to pre-render V2 tabs ─────────────
+var _origRenderMerchant = renderMerchant;
+function renderMerchant() {
+  _origRenderMerchant();
+  renderMCoupons();
+  renderMReferrals();
+  renderMPayouts();
+}
+
 </script>
 </body>
 </html>
