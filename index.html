@@ -1005,12 +1005,23 @@ async function connectWallet(type) {
     STATE.balance      = 0  // will be replaced by real on-chain value below
     STATE.referralCode = generateReferralCode(addr)  // unique 7-char code for this wallet
 
+    // Persist session so page refresh auto-reconnects (no popup)
+    saveSession(type, addr)
+
+    // Restore this wallet's previous subscriptions from localStorage
+    loadSubsForWallet(addr)
+
     // Listen for account/chain changes
     provider.on('accountsChanged', accs => {
       if (!accs.length) { disconnectWallet() }
       else {
-        STATE.address = accs[0]
+        var newAddr = accs[0]
+        STATE.address      = newAddr
+        STATE.referralCode = generateReferralCode(newAddr)
+        loadSubsForWallet(newAddr)
+        saveSession(STATE.wallet, newAddr)
         fetchUsdcBalance().then(updateWalletUI)
+        renderDashboard()
       }
     })
     provider.on('chainChanged', () => window.location.reload())
@@ -1020,7 +1031,7 @@ async function connectWallet(type) {
     closeWalletModal()
     updateWalletUI()
 
-    // Fetch real balance from ArcScan explorer
+    // Fetch real balance from Arc RPC
     await fetchUsdcBalance()
     // updateBalanceDisplays() is called inside fetchUsdcBalance → setBalance()
     toast('Connected!', `${name} · ${shortAddr(addr)}`, type === 'metamask' ? '\u{1F98A}' : '\u2B1B')
@@ -1235,8 +1246,118 @@ function disconnectWallet() {
   STATE.connected = false
   STATE.address   = ''
   STATE.wallet    = ''
+  STATE.provider  = null
+  STATE.balance   = null
+  STATE.referralCode = ''
+  // Remove session so refresh shows Connect Wallet
+  localStorage.removeItem('arcsub_session')
   updateWalletUI()
-  toast('Disconnected','Wallet disconnected','🔌')
+  toast('Disconnected', 'Wallet disconnected', '🔌')
+}
+
+// ══════════════════════════════════════════════
+// PERSISTENCE — localStorage
+// ══════════════════════════════════════════════
+
+// Save which wallet type + address was last connected
+// Called immediately after a successful connection
+function saveSession(walletType, address) {
+  try {
+    localStorage.setItem('arcsub_session', JSON.stringify({
+      wallet:  walletType,
+      address: address
+    }))
+  } catch(e) { /* storage may be unavailable */ }
+}
+
+// Save this wallet's subscriptions keyed by lowercase address
+function saveSubsForWallet(address) {
+  if (!address) return
+  try {
+    var key = 'arcsub_subs_' + address.toLowerCase()
+    localStorage.setItem(key, JSON.stringify(USER_SUBS))
+  } catch(e) { /* ignore */ }
+}
+
+// Restore subscriptions for a wallet address into USER_SUBS
+function loadSubsForWallet(address) {
+  if (!address) return
+  try {
+    var key  = 'arcsub_subs_' + address.toLowerCase()
+    var data = localStorage.getItem(key)
+    if (data) {
+      var parsed = JSON.parse(data)
+      // Clear and repopulate USER_SUBS in-place (array is const, but mutable)
+      USER_SUBS.length = 0
+      parsed.forEach(function(s) { USER_SUBS.push(s) })
+    } else {
+      USER_SUBS.length = 0  // new wallet — start clean
+    }
+  } catch(e) {
+    USER_SUBS.length = 0
+  }
+}
+
+// Silent reconnect on page load: check localStorage for previous session,
+// call eth_accounts (no popup) to verify wallet still unlocked, restore state.
+async function tryRestoreSession() {
+  var saved
+  try { saved = JSON.parse(localStorage.getItem('arcsub_session') || 'null') } catch(e) {}
+  if (!saved || !saved.wallet || !saved.address) return
+
+  // Resolve the provider the same way connectWallet does
+  var provider = resolveProvider(saved.wallet)
+  if (!provider) return
+
+  try {
+    // eth_accounts returns already-permitted accounts without a popup
+    var accounts = await provider.request({ method: 'eth_accounts' })
+    if (!accounts || !accounts.length) {
+      // Wallet locked or permission revoked — clear stale session
+      localStorage.removeItem('arcsub_session')
+      return
+    }
+    var addr = accounts[0].toLowerCase() === saved.address.toLowerCase()
+      ? accounts[0]   // same address — restore exactly
+      : accounts[0]   // different address — use current one
+
+    // Restore STATE silently (no popup, no chain switch needed yet)
+    STATE.connected    = true
+    STATE.wallet       = saved.wallet
+    STATE.address      = addr
+    STATE.provider     = provider
+    STATE.balance      = null
+    STATE.referralCode = generateReferralCode(addr)
+
+    // Restore this wallet's subscriptions
+    loadSubsForWallet(addr)
+
+    // Update session in case address changed
+    saveSession(saved.wallet, addr)
+
+    // Listen for account/chain changes
+    provider.on('accountsChanged', function(accs) {
+      if (!accs || !accs.length) { disconnectWallet() }
+      else {
+        STATE.address = accs[0]
+        loadSubsForWallet(accs[0])
+        saveSession(STATE.wallet, accs[0])
+        fetchUsdcBalance().then(updateWalletUI)
+        renderDashboard()
+      }
+    })
+    provider.on('chainChanged', function() { window.location.reload() })
+
+    // Update UI immediately with loading state
+    updateWalletUI()
+
+    // Fetch real balance in background
+    fetchUsdcBalance()
+
+  } catch(e) {
+    // Provider unavailable or accounts rejected — clear stale session
+    localStorage.removeItem('arcsub_session')
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -1520,8 +1641,11 @@ async function confirmSubscribe(planId) {
       token: plan.token, interval: plan.interval,
       start: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
       next: isTrial ? `Trial ends in ${plan.trial}d` : nextPaymentLabel(plan.interval),
-      payments: isTrial ? 0 : 1, status: 'active'
+      payments: isTrial ? 0 : 1, status: 'active',
+      retryCount: 0, gracePeriodEnd: null, usageThisMonth: 0
     })
+    // Persist to localStorage so this wallet's subs survive refresh
+    saveSubsForWallet(STATE.address)
     renderDashboard()
 
   } catch (err) {
@@ -1661,6 +1785,7 @@ async function confirmCharge(subId) {
     sub.payments += 1
     sub.next     = nextPaymentLabel(sub.interval)
 
+    saveSubsForWallet(STATE.address)
     closeModal('modal-charge')
     toast('Payment Confirmed!', `${sub.planName} · -${sub.price} USDC · tx: ${txHash.slice(0,20)}…`, '✅')
     renderDashboard()
@@ -1711,6 +1836,7 @@ async function cancelSubConfirm(subId) {
     updateBalanceDisplays()
 
     sub.status = 'cancelled'
+    saveSubsForWallet(STATE.address)
     closeModal('modal-charge')
     toast('Cancelled', `${sub.planName} cancelled on Arc · tx: ${txHash.slice(0,18)}…`, '🔴')
     renderDashboard()
@@ -1856,20 +1982,68 @@ function renderMSubscribers() {
 function renderMRevenue() {
   const el = document.getElementById('m-revenue')
   if(!el) return
+
+  // Compute revenue from this wallet's actual subscription data
+  // USER_SUBS contains subscriptions made by the connected wallet
+  const activeSubs   = USER_SUBS.filter(s => s.status === 'active')
+  const mrr          = activeSubs.reduce((a, s) => a + s.price, 0)
+  const totalPayments= USER_SUBS.reduce((a, s) => a + (s.payments || 0) * s.price, 0)
+  const platformFee  = totalPayments * 0.025
+  const netRevenue   = totalPayments - platformFee
+
+  // Group by plan for breakdown table
+  const planGroups = {}
+  USER_SUBS.forEach(function(s) {
+    if(!planGroups[s.planName]) planGroups[s.planName] = { price: s.price, subs: 0, monthly: 0, lifetime: 0 }
+    planGroups[s.planName].subs++
+    planGroups[s.planName].monthly   += s.status === 'active' ? s.price : 0
+    planGroups[s.planName].lifetime  += (s.payments || 0) * s.price
+  })
+  const planRows = Object.keys(planGroups)
+  const totalMRR = planRows.reduce((a, k) => a + planGroups[k].monthly, 0) || 1
+
+  const noData = USER_SUBS.length === 0
+
   el.innerHTML = `
-    <div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Revenue Analytics</h1><p style="font-size:13px;color:var(--text-1)">Detailed financial breakdown</p></div>
-    <div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
-      ${statCard('This Month','$847','+12.4%','up','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')}
-      ${statCard('Platform Fees Paid','$105','2.5% on $4,210 total','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')}
-      ${statCard('Net Revenue','$4,105','After platform fee','up','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')}
+    <div style="margin-bottom:26px">
+      <h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Revenue Analytics</h1>
+      <p style="font-size:13px;color:var(--text-1)">Breakdown for wallet ${STATE.address ? STATE.address.slice(0,10)+'&hellip;'+STATE.address.slice(-4) : ''}</p>
     </div>
-    <div class="card"><div class="card-header"><span class="card-title">Revenue by Plan</span></div>
-    <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Plan</th><th>Price</th><th>Subscribers</th><th>Monthly</th><th>Lifetime</th><th>Share</th></tr></thead><tbody>
-    ${[{n:'Premium Newsletter',p:'$10',s:142,m:1420,l:5960},{n:'SaaS Builder Pro',p:'$25',s:67,m:1675,l:3450},{n:'Membership Pass',p:'$5',s:289,m:1445,l:7890},{n:'Research Vault',p:'$199',s:38,m:627,l:2550}].map(r=>{
-      const pct=((r.m/5167)*100).toFixed(0)
-      return `<tr><td style="font-weight:500">${r.n}</td><td class="td-mono" style="color:var(--cyan)">${r.p}</td><td class="td-mono" style="color:var(--gold)">${r.s}</td><td class="td-mono" style="color:var(--cyan)">$${r.m.toLocaleString()}</td><td class="td-mono">$${r.l.toLocaleString()}</td><td><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;background:var(--bg-3);border-radius:2px;height:4px;min-width:60px"><div style="background:var(--cyan);height:100%;width:${pct}%;border-radius:2px"></div></div><span style="font-family:var(--font-m);font-size:10px;color:var(--text-2)">${pct}%</span></div></td></tr>`
-    }).join('')}
-    </tbody></table></div></div>`
+    <div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
+      ${statCard('Monthly Recurring', '$'+mrr.toFixed(2), mrr > 0 ? 'From '+activeSubs.length+' active plan'+(activeSubs.length!==1?'s':'') : 'No active plans', mrr>0?'up':'', 'linear-gradient(90deg,transparent,var(--cyan),transparent)', 'var(--cyan)')}
+      ${statCard('Platform Fees',     '$'+platformFee.toFixed(2), '2.5% of $'+totalPayments.toFixed(2)+' total', '', 'linear-gradient(90deg,transparent,var(--gold),transparent)', 'var(--gold)')}
+      ${statCard('Net Spend',         '$'+netRevenue.toFixed(2), 'After platform fee', netRevenue>0?'up':'', 'linear-gradient(90deg,transparent,var(--green),transparent)', 'var(--green)')}
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Spending by Plan</span></div>
+      ${noData
+        ? `<div style="padding:48px 24px;text-align:center">
+             <div style="font-size:36px;margin-bottom:12px;opacity:.35">&#128202;</div>
+             <div style="font-family:var(--font-d);font-weight:600;font-size:16px;margin-bottom:6px">No data yet</div>
+             <p style="font-size:13px;color:var(--text-1);max-width:280px;margin:0 auto">Subscribe to plans to see your spending breakdown here.</p>
+           </div>`
+        : `<div style="overflow-x:auto"><table class="data-table"><thead><tr>
+             <th>Plan</th><th>Price</th><th>Active Subs</th><th>Monthly</th><th>Lifetime</th><th>Share</th>
+           </tr></thead><tbody>
+           ${planRows.map(k => {
+             const r   = planGroups[k]
+             const pct = ((r.monthly / totalMRR) * 100).toFixed(0)
+             return `<tr>
+               <td style="font-weight:500">${k}</td>
+               <td class="td-mono" style="color:var(--cyan)">$${r.price}</td>
+               <td class="td-mono" style="color:var(--gold)">${r.subs}</td>
+               <td class="td-mono" style="color:var(--cyan)">$${r.monthly.toFixed(2)}</td>
+               <td class="td-mono">$${r.lifetime.toFixed(2)}</td>
+               <td><div style="display:flex;align-items:center;gap:8px">
+                 <div style="flex:1;background:var(--bg-3);border-radius:2px;height:4px;min-width:60px">
+                   <div style="background:var(--cyan);height:100%;width:${pct}%;border-radius:2px"></div>
+                 </div>
+                 <span style="font-family:var(--font-m);font-size:10px;color:var(--text-2)">${pct}%</span>
+               </div></td>
+             </tr>`
+           }).join('')}
+           </tbody></table></div>`}
+    </div>`
 }
 
 function renderMSettings() {
@@ -2021,6 +2195,14 @@ document.addEventListener('keydown', e => {
 // ══════════════════════════════════════════════
 showPage('landing')
 
+// Attempt silent reconnect from saved session (no wallet popup)
+// Runs after EIP-6963 providers have had time to announce themselves
+setTimeout(function() {
+  tryRestoreSession().catch(function(e) {
+    console.warn('[init] session restore failed:', e)
+  })
+}, 600)
+
 
 
 
@@ -2068,6 +2250,7 @@ function pauseSubDemo(subId) {
   if(!sub) return;
   sub.status = 'paused';
   sub.pausedAt = new Date().toISOString();
+  saveSubsForWallet(STATE.address);
   toast('Paused', sub.planName+' paused — access retained until next billing date', '⏸');
   renderDSubs();
 }
@@ -2078,6 +2261,7 @@ function resumeSubDemo(subId) {
   sub.status = 'active';
   sub.pausedAt = null;
   sub.next = nextPaymentLabel(sub.interval);
+  saveSubsForWallet(STATE.address);
   toast('Resumed', sub.planName+' resumed — next billing: '+sub.next, '▶');
   renderDSubs();
 }
