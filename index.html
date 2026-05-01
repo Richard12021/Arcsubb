@@ -1270,32 +1270,73 @@ function saveSession(walletType, address) {
   } catch(e) { /* storage may be unavailable */ }
 }
 
-// Save this wallet's subscriptions keyed by lowercase address
-function saveSubsForWallet(address) {
-  if (!address) return
-  try {
-    var key = 'arcsub_subs_' + address.toLowerCase()
-    localStorage.setItem(key, JSON.stringify(USER_SUBS))
-  } catch(e) { /* ignore */ }
+// ── Per-wallet data store ─────────────────────────────────────
+// Everything for a wallet lives under one localStorage key.
+// Schema: { subs:[], payouts:[], referrals:[], referralUses:0,
+//           referralEarned:0, referralPending:0 }
+function walletKey(address) {
+  return 'arcsub_wallet_' + (address || '').toLowerCase()
 }
 
-// Restore subscriptions for a wallet address into USER_SUBS
-function loadSubsForWallet(address) {
+function loadWalletData(address) {
+  try {
+    var raw = localStorage.getItem(walletKey(address))
+    if (raw) return JSON.parse(raw)
+  } catch(e) {}
+  return { subs:[], payouts:[], referrals:[],
+           referralUses:0, referralEarned:0, referralPending:0 }
+}
+
+function saveWalletData(address, data) {
   if (!address) return
   try {
-    var key  = 'arcsub_subs_' + address.toLowerCase()
-    var data = localStorage.getItem(key)
-    if (data) {
-      var parsed = JSON.parse(data)
-      // Clear and repopulate USER_SUBS in-place (array is const, but mutable)
-      USER_SUBS.length = 0
-      parsed.forEach(function(s) { USER_SUBS.push(s) })
-    } else {
-      USER_SUBS.length = 0  // new wallet — start clean
-    }
-  } catch(e) {
-    USER_SUBS.length = 0
-  }
+    localStorage.setItem(walletKey(address), JSON.stringify(data))
+  } catch(e) {}
+}
+
+// Convenience: save current in-memory state to localStorage for this wallet
+function persistWalletState(address) {
+  if (!address) return
+  var data = loadWalletData(address)
+  data.subs            = USER_SUBS.slice()
+  data.referralUses    = STATE.referralUses
+  data.referralEarned  = STATE.referralEarned
+  data.referralPending = STATE.referralPending
+  saveWalletData(address, data)
+}
+
+// Legacy aliases so existing callsites keep working
+function saveSubsForWallet(address) { persistWalletState(address) }
+
+function loadSubsForWallet(address) {
+  if (!address) return
+  var data = loadWalletData(address)
+  // Restore USER_SUBS in-place
+  USER_SUBS.length = 0
+  ;(data.subs || []).forEach(function(s) { USER_SUBS.push(s) })
+  // Restore referral counters
+  STATE.referralUses    = data.referralUses    || 0
+  STATE.referralEarned  = data.referralEarned  || 0
+  STATE.referralPending = data.referralPending || 0
+}
+
+// Record a payout when a subscription payment is confirmed
+function recordPayout(address, sub, txHash) {
+  if (!address) return
+  var data    = loadWalletData(address)
+  var planObj = PLANS.find(function(p){return p.id===sub.planId;})
+  data.payouts = data.payouts || []
+  data.payouts.unshift({
+    date:    new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+    subId:   sub.id,
+    plan:    sub.planName,
+    gross:   sub.price,
+    merch:   +(sub.price * 0.95).toFixed(4),
+    plat:    +(sub.price * 0.025).toFixed(4),
+    aff:     +(sub.price * 0.025).toFixed(4),
+    tx:      txHash ? txHash.slice(0,18)+'...' : '—'
+  })
+  saveWalletData(address, data)
 }
 
 // Silent reconnect on page load: check localStorage for previous session,
@@ -1644,6 +1685,10 @@ async function confirmSubscribe(planId) {
       payments: isTrial ? 0 : 1, status: 'active',
       retryCount: 0, gracePeriodEnd: null, usageThisMonth: 0
     })
+    // Record payout for first payment (paid plans only)
+    if (!isTrial) {
+      recordPayout(STATE.address, USER_SUBS[USER_SUBS.length - 1], txHash)
+    }
     // Persist to localStorage so this wallet's subs survive refresh
     saveSubsForWallet(STATE.address)
     renderDashboard()
@@ -1785,6 +1830,7 @@ async function confirmCharge(subId) {
     sub.payments += 1
     sub.next     = nextPaymentLabel(sub.interval)
 
+    recordPayout(STATE.address, sub, txHash)
     saveSubsForWallet(STATE.address)
     closeModal('modal-charge')
     toast('Payment Confirmed!', `${sub.planName} · -${sub.price} USDC · tx: ${txHash.slice(0,20)}…`, '✅')
@@ -1865,58 +1911,88 @@ function merchantTab(id, el) {
 }
 
 function renderMOverview() {
-  const el = document.getElementById('m-overview')
+  var el = document.getElementById('m-overview')
   if(!el) return
-  const max = Math.max(...REVENUE_DATA.map(d=>d.v))
-  el.innerHTML = `
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:26px">
-      <div><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Merchant Dashboard</h1><p style="font-size:13px;color:var(--text-1)">Apr 2026 · Arc Testnet</p></div>
-      <button class="btn-primary" onclick="openCreatePlan()">+ New Plan</button>
-    </div>
-    <div class="stats-row">
-      ${statCard('Monthly Recurring Revenue','$847','+12.4% vs last month','up','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')}
-      ${statCard('Active Subscribers','24','+3 this week','up','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')}
-      ${statCard('Lifetime Revenue','$4,210','All time','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')}
-      ${statCard('Churn Rate','3.2%','-0.8% vs last month','down','linear-gradient(90deg,transparent,var(--purple),transparent)','var(--purple)')}
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;margin-bottom:16px">
-      <div class="card">
-        <div class="card-header"><span class="card-title">Revenue · Last 7 months</span><span style="font-family:var(--font-m);font-size:12px;color:var(--text-2)">USDC</span></div>
-        <div class="card-body">
-          <div class="bar-chart">
-            ${REVENUE_DATA.map(d=>`
-              <div class="bar-wrap">
-                <div style="flex:1;width:100%;display:flex;align-items:flex-end">
-                  <div class="bar" style="height:${(d.v/max)*100}%;background:linear-gradient(180deg,var(--cyan),rgba(56,200,240,.3));min-height:4px" title="${d.m}: $${d.v}"></div>
-                </div>
-                <div class="bar-label">${d.m}</div>
-              </div>`).join('')}
-          </div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">Plans</span><button class="btn-ghost" onclick="merchantTab('plans',document.getElementById('ms-plans'))" style="font-size:11px;padding:3px 9px">View all</button></div>
-        ${PLANS.slice(0,4).map(p=>`
-          <div style="display:flex;align-items:center;padding:11px 20px;border-bottom:1px solid var(--border);gap:10px">
-            <div style="width:8px;height:8px;border-radius:50%;background:${p.color};flex-shrink:0"></div>
-            <span style="flex:1;font-size:13px;font-weight:500">${p.name}</span>
-            <span style="font-family:var(--font-m);font-size:11px;color:var(--text-1)">${p.subs}</span>
-            <span style="font-family:var(--font-m);font-size:11px;color:var(--cyan)">$${p.price}</span>
-          </div>`).join('')}
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">Recent Subscriptions</span></div>
-      <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Subscriber</th><th>Plan</th><th>Amount</th><th>Payments</th><th>Next Due</th><th>Status</th></tr></thead><tbody>
-        ${[
-          {addr:'0x1a2b…3c4d',plan:'Premium Newsletter',amount:'10.00',payments:2,next:'May 1',status:'active'},
-          {addr:'0x2b3c…4d5e',plan:'SaaS Builder Pro',amount:'25.00',payments:1,next:'Apr 22',status:'paused'},
-          {addr:'0x3c4d…5e6f',plan:'Membership Pass',amount:'5.00',payments:3,next:'Apr 27',status:'active'},
-          {addr:'0x4d5e…6f7a',plan:'Research Vault',amount:'199.00',payments:1,next:'Mar 2027',status:'active'},
-        ].map(s=>`<tr><td class="td-mono">${s.addr}</td><td>${s.plan}</td><td class="td-mono" style="color:var(--cyan)">$${s.amount}</td><td class="td-mono">${s.payments}</td><td style="font-size:12px;color:var(--text-1)">${s.next}</td><td><span class="badge badge-${s.status}">${s.status}</span></td></tr>`).join('')}
-      </tbody></table></div>
-    </div>`
+
+  // Compute all stats from this wallet's real subscription data
+  var walletData   = loadWalletData(STATE.address)
+  var activeSubs   = USER_SUBS.filter(function(s){return s.status==='active';})
+  var mrr          = activeSubs.reduce(function(a,s){return a+s.price;},0)
+  var totalRevenue = (walletData.payouts||[]).reduce(function(a,p){return a+p.gross;},0)
+  var churnCount   = USER_SUBS.filter(function(s){return s.status==='cancelled';}).length
+  var churnRate    = USER_SUBS.length > 0 ? ((churnCount/USER_SUBS.length)*100).toFixed(1)+'%' : '0%'
+  var noData       = USER_SUBS.length === 0
+
+  // Build revenue chart from real payout history (last 6 months)
+  var payoutsByMonth = {}
+  ;(walletData.payouts||[]).forEach(function(p) {
+    var d   = new Date(p.date)
+    var key = isNaN(d) ? 'Recent' : d.toLocaleDateString('en-US',{month:'short'})
+    payoutsByMonth[key] = (payoutsByMonth[key]||0) + p.gross
+  })
+  var chartMonths = Object.keys(payoutsByMonth)
+  var chartMax    = Math.max.apply(null, chartMonths.map(function(m){return payoutsByMonth[m];})) || 1
+
+  var chartHtml
+  if(chartMonths.length === 0) {
+    chartHtml = '<div style="display:flex;align-items:center;justify-content:center;height:140px;color:var(--text-2);font-family:var(--font-m);font-size:12px">No payment history yet</div>'
+  } else {
+    chartHtml = '<div class="bar-chart">'
+      + chartMonths.map(function(m){
+          var h = ((payoutsByMonth[m]/chartMax)*100).toFixed(1)
+          return '<div class="bar-wrap">'
+            + '<div style="flex:1;width:100%;display:flex;align-items:flex-end">'
+            + '<div class="bar" style="height:'+h+'%;background:linear-gradient(180deg,var(--cyan),rgba(56,200,240,.3));min-height:4px" title="'+m+': $'+payoutsByMonth[m].toFixed(2)+'"></div>'
+            + '</div><div class="bar-label">'+m+'</div></div>'
+        }).join('')
+      + '</div>'
+  }
+
+  // Recent subscriptions table from USER_SUBS
+  var recentRows
+  if(USER_SUBS.length === 0) {
+    recentRows = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-2);font-family:var(--font-m);font-size:12px">No subscriptions yet — subscribe to plans from Browse</td></tr>'
+  } else {
+    recentRows = USER_SUBS.slice(0,5).map(function(s){
+      return '<tr><td class="td-mono">'+STATE.address.slice(0,8)+'&hellip;</td>'
+        + '<td>'+s.planName+'</td>'
+        + '<td class="td-mono" style="color:var(--cyan)">$'+s.price.toFixed(2)+'</td>'
+        + '<td class="td-mono">'+s.payments+'</td>'
+        + '<td style="font-size:12px;color:var(--text-1)">'+s.next+'</td>'
+        + '<td><span class="badge badge-'+s.status+'">'+s.status+'</span></td></tr>'
+    }).join('')
+  }
+
+  el.innerHTML = '<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:26px">'
+    + '<div><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Merchant Dashboard</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">'+new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'})+' &middot; Arc Testnet</p></div>'
+    + '<button class="btn-primary" onclick="openCreatePlan()">+ New Plan</button></div>'
+    + '<div class="stats-row">'
+    + statCard('Monthly Recurring', '$'+mrr.toFixed(2), activeSubs.length+' active plan'+(activeSubs.length!==1?'s':''), mrr>0?'up':'', 'linear-gradient(90deg,transparent,var(--cyan),transparent)', 'var(--cyan)')
+    + statCard('Active Subscriptions', String(activeSubs.length), USER_SUBS.length+' total ever', activeSubs.length>0?'up':'', 'linear-gradient(90deg,transparent,var(--gold),transparent)', 'var(--gold)')
+    + statCard('Lifetime Spend', '$'+totalRevenue.toFixed(2), 'All time', totalRevenue>0?'up':'', 'linear-gradient(90deg,transparent,var(--green),transparent)', 'var(--green)')
+    + statCard('Churn Rate', churnRate, churnCount+' cancelled', churnCount>0?'down':'', 'linear-gradient(90deg,transparent,var(--purple),transparent)', 'var(--purple)')
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 300px;gap:16px;margin-bottom:16px">'
+    + '<div class="card"><div class="card-header"><span class="card-title">Payment History</span><span style="font-family:var(--font-m);font-size:12px;color:var(--text-2)">USDC</span></div>'
+    + '<div class="card-body">'+chartHtml+'</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">My Plans</span>'
+    + '<button class="btn-ghost" onclick="merchantTab(\'plans\',document.getElementById(\'ms-plans\'))" style="font-size:11px;padding:3px 9px">View all</button></div>'
+    + PLANS.slice(0,4).map(function(p){
+        var mySub = USER_SUBS.filter(function(s){return s.planId===p.id;}).length
+        return '<div style="display:flex;align-items:center;padding:11px 20px;border-bottom:1px solid var(--border);gap:10px">'
+          + '<div style="width:8px;height:8px;border-radius:50%;background:'+p.color+';flex-shrink:0"></div>'
+          + '<span style="flex:1;font-size:13px;font-weight:500">'+p.name+'</span>'
+          + '<span style="font-family:var(--font-m);font-size:11px;color:var(--text-1)">'+mySub+' sub'+(mySub!==1?'s':'')+'</span>'
+          + '<span style="font-family:var(--font-m);font-size:11px;color:var(--cyan)">$'+p.price+'</span></div>'
+      }).join('')
+    + '</div></div>'
+    + '<div class="card"><div class="card-header"><span class="card-title">My Subscriptions</span></div>'
+    + '<div style="overflow-x:auto"><table class="data-table"><thead><tr>'
+    + '<th>Address</th><th>Plan</th><th>Amount</th><th>Payments</th><th>Next Due</th><th>Status</th>'
+    + '</tr></thead><tbody>'+recentRows+'</tbody></table></div></div>'
 }
+
 
 function statCard(label,val,delta,dir,bar,color){
   return `<div class="stat-card"><div class="top-bar" style="background:${bar}"></div><div class="stat-card-inner">
@@ -2707,54 +2783,80 @@ function deactivateCoupon(code) {
 function renderMReferrals() {
   var el = document.getElementById('m-referrals');
   if(!el) return;
-  var rows = DEMO_REFERRALS.map(function(r) {
-    var code = r.wallet ? generateReferralCode(r.wallet.replace('0x','').replace('…','aabbccdd')) : '-------';
-    return '<tr><td class="td-mono">'+r.wallet+'</td>'
-      + '<td><code style="font-family:var(--font-m);color:var(--cyan);font-size:12px;letter-spacing:2px">'+code+'</code></td>'
-      + '<td>'+r.plan+'</td>'
-      + '<td class="td-mono" style="color:var(--gold)">$'+r.earned+' USDC</td>'
-      + '<td style="font-size:12px;color:var(--text-1)">'+r.date+'</td>'
-      + '<td><a href="https://testnet.arcscan.app/tx/'+r.tx+'" target="_blank" style="color:var(--cyan);font-family:var(--font-m);font-size:11px">'+r.tx+' &#8599;</a></td></tr>';
-  }).join('');
-  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Referral Program</h1>'
-    + '<p style="font-size:13px;color:var(--text-1)">Incentivise word-of-mouth growth</p></div>'
+
+  // Load this wallet's referral history from persistent store
+  var walletData = loadWalletData(STATE.address);
+  var refs       = walletData.referrals || [];
+  var totalEarned= refs.reduce(function(a,r){return a+r.earned;},0);
+  var refCode    = STATE.referralCode || (STATE.address ? generateReferralCode(STATE.address) : '');
+
+  var rows;
+  if(refs.length === 0) {
+    rows = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-2);font-family:var(--font-m);font-size:12px">No referrals recorded yet — share code <strong style="color:var(--cyan)">'+refCode+'</strong></td></tr>';
+  } else {
+    rows = refs.map(function(r) {
+      return '<tr><td class="td-mono">'+r.wallet+'</td>'
+        + '<td>'+r.plan+'</td>'
+        + '<td class="td-mono" style="color:var(--gold)">$'+r.earned.toFixed(2)+' USDC</td>'
+        + '<td style="font-size:12px;color:var(--text-1)">'+r.date+'</td>'
+        + '<td><span style="font-family:var(--font-m);font-size:11px;color:var(--cyan)">'+r.tx+'</span></td></tr>';
+    }).join('');
+  }
+
+  el.innerHTML = '<div style="margin-bottom:26px">'
+    + '<h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Referral Program</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Your referral code: <strong style="color:var(--cyan);letter-spacing:2px">'+refCode+'</strong></p></div>'
     + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
-    + statCard('Total Referrals', DEMO_REFERRALS.length > 0 ? String(DEMO_REFERRALS.length) : '0','','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
-    + statCard('Commissions Paid', DEMO_REFERRALS.length > 0 ? ('$'+DEMO_REFERRALS.reduce(function(a,r){return a+r.earned;},0).toFixed(2)) : '$0.00','USDC','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
-    + statCard('Conv. Rate', DEMO_REFERRALS.length > 0 ? '33%' : '0%', DEMO_REFERRALS.length > 0 ? '1 in 3 converts' : 'No referrals yet','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
+    + statCard('Total Referrals', String(refs.length), refs.length>0?'subscribers joined':'No referrals yet','', 'linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
+    + statCard('Commissions Earned', '$'+totalEarned.toFixed(2), refs.length>0?'USDC paid':'Start sharing your code','', 'linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
+    + statCard('Your Code', refCode||'Connect wallet', refs.length>0?refs.length+' uses':'0 uses','', 'linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
     + '</div>'
     + '<div class="card"><div class="card-header"><span class="card-title">Referral Events</span></div>'
-    + '<div class="table-wrap"><table class="data-table"><thead><tr><th>Referrer</th><th>Code</th><th>Plan</th><th>Reward</th><th>Date</th><th>Tx</th></tr></thead>'
-    + '<tbody>'+rows+'</tbody></table></div></div>';
+    + '<div class="table-wrap"><table class="data-table"><thead><tr>'
+    + '<th>Referred Wallet</th><th>Plan</th><th>Reward</th><th>Date</th><th>Tx</th>'
+    + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 
 // ── Merchant Payouts tab ──────────────────────────────────────
 function renderMPayouts() {
   var el = document.getElementById('m-payouts');
   if(!el) return;
-  var DEMO_PAYOUTS = [
-    {date:'Apr 1, 2026',  sub:'0x1a2b&hellip;', plan:'Premium Newsletter', gross:10,  merch:9.50,   plat:0.50,  aff:0,    tx:'0xabc&hellip;'},
-    {date:'Apr 1, 2026',  sub:'0x2b3c&hellip;', plan:'SaaS Builder Pro',   gross:25,  merch:23.75,  plat:1.25,  aff:0,    tx:'0xdef&hellip;'},
-    {date:'Apr 6, 2026',  sub:'0x3c4d&hellip;', plan:'Membership Pass',    gross:5,   merch:4.50,   plat:0.25,  aff:0.25, tx:'0xghi&hellip;'},
-    {date:'Apr 13, 2026', sub:'0x4d5e&hellip;', plan:'Research Vault',     gross:199, merch:189.05, plat:9.95,  aff:0,    tx:'0xjkl&hellip;'},
-  ];
-  var rows = DEMO_PAYOUTS.map(function(p) {
-    return '<tr><td style="font-size:12px;color:var(--text-1)">'+p.date+'</td>'
-      + '<td class="td-mono">'+p.sub+'</td><td style="font-size:12px">'+p.plan+'</td>'
-      + '<td class="td-mono">$'+p.gross+'</td>'
-      + '<td class="td-mono" style="color:var(--green)">$'+p.merch+'</td>'
-      + '<td class="td-mono" style="color:var(--text-2)">$'+p.plat+'</td>'
-      + '<td><a href="https://testnet.arcscan.app/tx/'+p.tx+'" target="_blank" style="color:var(--cyan);font-family:var(--font-m);font-size:11px">'+p.tx+' &#8599;</a></td></tr>';
-  }).join('');
-  el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Payout History</h1>'
-    + '<p style="font-size:13px;color:var(--text-1)">Revenue split log &mdash; every payment on-chain</p></div>'
+
+  // Load this wallet's real payout history
+  var walletData = loadWalletData(STATE.address);
+  var payouts    = walletData.payouts || [];
+
+  var totalGross = payouts.reduce(function(a,p){return a+p.gross;},0);
+  var totalMerch = payouts.reduce(function(a,p){return a+p.merch;},0);
+  var totalPlat  = payouts.reduce(function(a,p){return a+p.plat;},0);
+  var totalAff   = payouts.reduce(function(a,p){return a+p.aff;},0);
+
+  var rows;
+  if(payouts.length === 0) {
+    rows = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-2);font-family:var(--font-m);font-size:12px">No payouts yet &mdash; subscribe to plans to see your payment history here</td></tr>';
+  } else {
+    rows = payouts.map(function(p) {
+      return '<tr>'
+        + '<td style="font-size:12px;color:var(--text-1)">'+p.date+'</td>'
+        + '<td style="font-size:12px">'+p.plan+'</td>'
+        + '<td class="td-mono">$'+p.gross.toFixed(2)+'</td>'
+        + '<td class="td-mono" style="color:var(--green)">$'+p.merch.toFixed(2)+'</td>'
+        + '<td class="td-mono" style="color:var(--text-2)">$'+p.plat.toFixed(2)+'</td>'
+        + '<td><span style="font-family:var(--font-m);font-size:11px;color:var(--cyan)">'+p.tx+'</span></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  el.innerHTML = '<div style="margin-bottom:26px">'
+    + '<h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Payout History</h1>'
+    + '<p style="font-size:13px;color:var(--text-1)">Payment split log for wallet '+( STATE.address ? STATE.address.slice(0,10)+'&hellip;'+STATE.address.slice(-4) : '')+'</p></div>'
     + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
-    + statCard('Your Share','$226.80','95% of gross','up','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
-    + statCard('Platform Fee','$11.95','2.5% avg','','linear-gradient(90deg,transparent,var(--text-2),transparent)','var(--text-2)')
-    + statCard('Affiliate','$0.25','Paid to partners','','linear-gradient(90deg,transparent,var(--purple),transparent)','var(--purple)')
+    + statCard('Total Gross', '$'+totalGross.toFixed(2), payouts.length+' payment'+(payouts.length!==1?'s':''), totalGross>0?'up':'', 'linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
+    + statCard('Platform Fees', '$'+totalPlat.toFixed(2), '2.5% of gross','', 'linear-gradient(90deg,transparent,var(--text-2),transparent)','var(--text-2)')
+    + statCard('Net Received', '$'+totalMerch.toFixed(2), '95% of gross', totalMerch>0?'up':'', 'linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
     + '</div>'
     + '<div class="card"><div class="table-wrap"><table class="data-table"><thead><tr>'
-    + '<th>Date</th><th>Subscriber</th><th>Plan</th><th>Gross</th><th>You Got</th><th>Platform</th><th>Tx</th>'
+    + '<th>Date</th><th>Plan</th><th>Gross</th><th>Net</th><th>Platform</th><th>Tx</th>'
     + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
 }
 
