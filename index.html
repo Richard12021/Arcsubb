@@ -283,10 +283,7 @@ textarea.input{resize:vertical;min-height:72px}
      NAV
 ══════════════════════════════════════════════ -->
 <nav class="nav">
-  <div class="nav-logo" onclick="showPage('landing')">
-    <div class="nav-logo-icon">A</div>
-    Arc<span>Sub</span>
-  </div>
+  <div class="nav-logo" onclick="showPage('landing')"><div class="nav-logo-icon">A</div>Arc<span>Sub</span></div>
 
   <div class="nav-links">
     <button class="nav-link active" id="nl-landing"  onclick="showPage('landing')">Home</button>
@@ -682,19 +679,24 @@ textarea.input{resize:vertical;min-height:72px}
 // STATE
 // ══════════════════════════════════════════════
 const STATE = {
-  connected:   false,
-  wallet:      '',
-  address:     '',
-  balance:     null,
-  activePlan:  null,
-  activeSub:   null,
-  createInterval: 'Weekly',
-  createToken:    'USDC',
+  connected:       false,
+  wallet:          '',
+  address:         '',
+  balance:         null,
+  activePlan:      null,
+  activeSub:       null,
+  createInterval:  'Weekly',
+  createToken:     'USDC',
   // V2
-  backupWallet:   '',
-  couponCode:     '',
-  couponValid:    null,
-  changePlanSub:  null,
+  backupWallet:    '',
+  couponCode:      '',
+  couponValid:     null,
+  changePlanSub:   null,
+  referralCode:    '',
+  // Referral stats — 0 until someone actually uses the link
+  referralUses:    0,
+  referralEarned:  0,
+  referralPending: 0,
 }
 
 // Demo plans
@@ -736,11 +738,37 @@ const DEMO_USAGE = [
 
 // V2 — Notifications
 const DEMO_NOTIFICATIONS = [
-  {type:'retry_scheduled', msg:'Payment retry #1 scheduled for SaaS Builder Pro.', date:'Apr 27, 2026', read:false},
-  {type:'grace_period',    msg:'Membership Pass payment overdue — 3-day grace period active.', date:'Apr 26, 2026', read:false},
-  {type:'payment_success', msg:'Premium Newsletter payment confirmed. Next billing: May 1, 2026.', date:'Apr 1, 2026', read:true},
-  {type:'trial_ending',    msg:'Your SaaS Builder Pro trial ends in 2 days.', date:'Mar 8, 2026', read:true},
+  {type:'renewal_reminder', msg:'Your Premium Newsletter subscription renews in 3 days (May 1, 2026). Make sure your wallet has sufficient USDC.', date:'Apr 28, 2026', read:false},
+  {type:'renewal_reminder', msg:'Your Membership Pass subscription renews in 1 day (Apr 27, 2026). Ensure your balance is topped up to avoid interruption.', date:'Apr 26, 2026', read:false},
+  {type:'payment_success',  msg:'Premium Newsletter payment confirmed. Next billing: May 1, 2026.', date:'Apr 1, 2026', read:true},
+  {type:'trial_ending',     msg:'Your SaaS Builder Pro trial ends in 2 days — first charge of $25 USDC will occur automatically.', date:'Mar 8, 2026', read:true},
 ]
+
+// Generate renewal reminder notifications dynamically from USER_SUBS
+// Called after every successful subscription so new subs get reminders too
+function generateRenewalNotifications() {
+  var now = Date.now();
+  var threeDays = 3 * 24 * 60 * 60 * 1000;
+  USER_SUBS.forEach(function(sub) {
+    if(sub.status !== 'active' || !sub.nextPaymentTs) return;
+    var diff = sub.nextPaymentTs - now;
+    if(diff > 0 && diff <= threeDays) {
+      var daysLeft = Math.ceil(diff / (24*60*60*1000));
+      var label = daysLeft === 1 ? 'tomorrow' : 'in '+daysLeft+' days';
+      var alreadyExists = DEMO_NOTIFICATIONS.some(function(n) {
+        return n.type==='renewal_reminder' && n.msg.indexOf(sub.planName) >= 0;
+      });
+      if(!alreadyExists) {
+        DEMO_NOTIFICATIONS.unshift({
+          type: 'renewal_reminder',
+          msg:  sub.planName+' subscription renews '+label+' ('+sub.next+'). Ensure your wallet has $'+sub.price+' '+sub.token+' available.',
+          date: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+          read: false
+        });
+      }
+    }
+  });
+}
 
 const PAYMENT_HISTORY = [
   {plan:'Membership Pass',   merchant:'CreatorDAO',  amount:5,  date:'Apr 13, 2026',status:'success',tx:'0x7a3f…c21b'},
@@ -1870,6 +1898,7 @@ function renderMSettings() {
 // USER DASHBOARD
 // ══════════════════════════════════════════════
 function renderDashboard() {
+  generateRenewalNotifications()
   renderDSubs()
   renderDHistory()
 }
@@ -2214,7 +2243,7 @@ function renderUsageTab() {
 function renderNotificationsTab() {
   var el = document.getElementById('d-notif');
   if(!el) return;
-  var iconMap = {retry_scheduled:'&#9201;', grace_period:'&#9888;&#65039;', payment_success:'&#9989;', trial_ending:'&#128276;', payment_failed:'&#10060;'};
+  var iconMap = {retry_scheduled:'&#9201;', grace_period:'&#9888;&#65039;', payment_success:'&#9989;', trial_ending:'&#128276;', payment_failed:'&#10060;', renewal_reminder:'&#128197;'};
   var items = DEMO_NOTIFICATIONS.map(function(n, i) {
     var icon = iconMap[n.type] || '&middot;';
     return '<div class="'+(n.read?'':'notif-unread')+'" style="display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid var(--border)">'
@@ -2316,15 +2345,22 @@ function renderReferralTab() {
     + '<h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Referrals</h1>'
     + '<p style="font-size:13px;color:var(--text-1)">Earn USDC for every subscriber you refer</p></div>'
     + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
-    + statCard('Total Earned','$4.00','All time','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
-    + statCard('Referrals','3','','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
-    + statCard('Pending','$1.50','Unlocks next payment','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
+    + statCard('Total Earned', STATE.referralEarned > 0 ? '$'+STATE.referralEarned.toFixed(2) : '$0.00', 'All time','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
+    + statCard('Referrals Used', String(STATE.referralUses), STATE.referralUses > 0 ? 'subscribers joined' : 'Share your code to start','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
+    + statCard('Pending Reward', STATE.referralPending > 0 ? '$'+STATE.referralPending.toFixed(2) : '$0.00', STATE.referralPending > 0 ? 'Unlocks next payment' : 'No pending rewards','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
     + '</div>'
     + codeSection
     + '<div class="card"><div class="card-header"><span class="card-title">Referral History</span></div>'
-    + '<div style="overflow-x:auto"><table class="data-table"><thead><tr>'
-    + '<th>Referred Wallet</th><th>Plan</th><th>Earned</th><th>Date</th><th>Tx</th>'
-    + '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+    + (STATE.referralUses === 0
+      ? '<div style="padding:48px 24px;text-align:center">'
+        + '<div style="font-size:36px;margin-bottom:12px;opacity:.35">&#128279;</div>'
+        + '<div style="font-family:var(--font-d);font-weight:600;font-size:16px;margin-bottom:6px">No referrals yet</div>'
+        + '<p style="font-size:13px;color:var(--text-1);max-width:280px;margin:0 auto">Share your code or link above. When someone subscribes using it, their details will appear here.</p>'
+        + '</div>'
+      : '<div style="overflow-x:auto"><table class="data-table"><thead><tr>'
+        + '<th>Referred Wallet</th><th>Plan</th><th>Earned</th><th>Date</th><th>Tx</th>'
+        + '</tr></thead><tbody>'+rows+'</tbody></table></div>')
+    + '</div>';
 }
 
 
@@ -2499,9 +2535,9 @@ function renderMReferrals() {
   el.innerHTML = '<div style="margin-bottom:26px"><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">Referral Program</h1>'
     + '<p style="font-size:13px;color:var(--text-1)">Incentivise word-of-mouth growth</p></div>'
     + '<div class="stats-row" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">'
-    + statCard('Total Referrals','3','','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
-    + statCard('Commissions Paid','$4.00','USDC','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
-    + statCard('Conv. Rate','33%','1 in 3 converts','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
+    + statCard('Total Referrals', DEMO_REFERRALS.length > 0 ? String(DEMO_REFERRALS.length) : '0','','','linear-gradient(90deg,transparent,var(--cyan),transparent)','var(--cyan)')
+    + statCard('Commissions Paid', DEMO_REFERRALS.length > 0 ? ('$'+DEMO_REFERRALS.reduce(function(a,r){return a+r.earned;},0).toFixed(2)) : '$0.00','USDC','','linear-gradient(90deg,transparent,var(--gold),transparent)','var(--gold)')
+    + statCard('Conv. Rate', DEMO_REFERRALS.length > 0 ? '33%' : '0%', DEMO_REFERRALS.length > 0 ? '1 in 3 converts' : 'No referrals yet','','linear-gradient(90deg,transparent,var(--green),transparent)','var(--green)')
     + '</div>'
     + '<div class="card"><div class="card-header"><span class="card-title">Referral Events</span></div>'
     + '<div class="table-wrap"><table class="data-table"><thead><tr><th>Referrer</th><th>Code</th><th>Plan</th><th>Reward</th><th>Date</th><th>Tx</th></tr></thead>'
