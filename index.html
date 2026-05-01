@@ -709,12 +709,9 @@ const PLANS = [
 ]
 
 // Demo subscriptions
-const USER_SUBS = [
-  {id:101,planId:1,planName:'Premium Newsletter',merchant:'AlphaMedia',price:10,token:'USDC',interval:'Monthly',start:'Mar 1, 2026',next:'May 1, 2026',payments:2,status:'active', retryCount:0, gracePeriodEnd:null, usageThisMonth:0},
-  {id:102,planId:2,planName:'SaaS Builder Pro',merchant:'DevTools Inc',price:25,token:'USDC',interval:'Monthly',start:'Mar 15, 2026',next:'Apr 15, 2026',payments:1,status:'paused', retryCount:1, nextRetryAt:'Apr 28, 2026 06:00', gracePeriodEnd:null, usageThisMonth:0},
-  {id:103,planId:3,planName:'Membership Pass',merchant:'CreatorDAO',price:5,token:'USDC',interval:'Weekly',start:'Apr 6, 2026',next:'Apr 27, 2026',payments:2,status:'overdue', retryCount:2, nextRetryAt:'Apr 28, 2026 14:00', gracePeriodEnd:'May 1, 2026', usageThisMonth:0},
-  {id:104,planId:2,planName:'SaaS Builder Pro',merchant:'DevTools Inc',price:25,token:'USDC',interval:'Monthly',start:'Feb 1, 2026',next:'May 1, 2026',payments:3,status:'active', retryCount:0, gracePeriodEnd:null, usageThisMonth:142, usagePricePerUnit:0.01},
-]
+// USER_SUBS — starts empty. Populated when a user actually subscribes.
+// This ensures stats show 0 for new wallets and only real data after subscribing.
+const USER_SUBS = []
 
 // V2 — Coupons
 const DEMO_COUPONS = [
@@ -2079,16 +2076,51 @@ function validateCoupon() {
 function renderDSubs() {
   var el = document.getElementById('d-subs');
   if(!el) return;
-  var active = USER_SUBS.filter(function(s){return s.status!=='cancelled';});
-  var spend  = active.reduce(function(a,s){return a+s.price;}, 0);
+
+  // Not connected — show connect prompt
+  if(!STATE.connected) {
+    el.innerHTML = '<div style="margin-bottom:26px">'
+      + '<h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">My Subscriptions</h1>'
+      + '<p style="font-size:13px;color:var(--text-1)">Manage your active plans on Arc</p></div>'
+      + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:80px 24px;text-align:center">'
+      + '<div style="font-size:48px;margin-bottom:20px;opacity:.35">&#128274;</div>'
+      + '<div style="font-family:var(--font-d);font-weight:600;font-size:20px;margin-bottom:8px">Connect your wallet</div>'
+      + '<p style="font-size:14px;color:var(--text-1);max-width:320px;margin-bottom:24px">Connect MetaMask or OKX Wallet to view your subscriptions and billing history.</p>'
+      + '<button class="btn-primary" style="font-size:14px;padding:11px 28px" onclick="openWalletModal()">Connect Wallet</button>'
+      + '</div>';
+    return;
+  }
+
+  // Connected — compute stats from actual USER_SUBS only.
+  // USER_SUBS starts empty; entries are added only after a successful subscription tx.
+  var active    = USER_SUBS.filter(function(s){return s.status==='active';});
+  var spend     = active.reduce(function(a,s){return a+s.price;}, 0);
+  var unread    = DEMO_NOTIFICATIONS.filter(function(n){return !n.read;}).length;
 
   var statsHtml = '<div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:24px">'
-    + statCard('Active Plans',    String(active.filter(function(s){return s.status==='active';}).length), '', '', 'linear-gradient(90deg,transparent,var(--cyan),transparent)', 'var(--cyan)')
-    + statCard('Monthly Spend',   '$'+spend.toFixed(2), '', '', 'linear-gradient(90deg,transparent,var(--gold),transparent)', 'var(--gold)')
-    + statCard('USDC Balance',    fmtBalance(STATE.balance), 'Live', '', 'linear-gradient(90deg,transparent,var(--green),transparent)', 'var(--green)')
-    + statCard('Notifications',   String(DEMO_NOTIFICATIONS.filter(function(n){return !n.read;}).length)+' unread', '', '', 'linear-gradient(90deg,transparent,var(--red),transparent)', 'var(--red)')
+    + statCard('Active Plans',  String(active.length),                  '', '', 'linear-gradient(90deg,transparent,var(--cyan),transparent)', 'var(--cyan)')
+    + statCard('Monthly Spend', active.length > 0 ? '$'+spend.toFixed(2) : '$0.00', '', '', 'linear-gradient(90deg,transparent,var(--gold),transparent)', 'var(--gold)')
+    + statCard('USDC Balance',  fmtBalance(STATE.balance),              'Live', '', 'linear-gradient(90deg,transparent,var(--green),transparent)', 'var(--green)')
+    + statCard('Notifications', String(unread)+' unread',               '', '', 'linear-gradient(90deg,transparent,var(--red),transparent)', 'var(--red)')
     + '</div>';
 
+  // Connected but no subscriptions yet
+  if(USER_SUBS.length === 0) {
+    el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px">'
+      + '<div><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">My Subscriptions</h1>'
+      + '<p style="font-size:13px;color:var(--text-1)">Manage your active plans on Arc</p></div>'
+      + '<button class="btn-secondary" onclick="showPage(\'browse\')">+ Browse Plans</button></div>'
+      + statsHtml
+      + '<div style="background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);padding:60px 24px;text-align:center">'
+      + '<div style="font-size:40px;margin-bottom:16px;opacity:.35">&#128230;</div>'
+      + '<div style="font-family:var(--font-d);font-weight:600;font-size:18px;margin-bottom:8px">No subscriptions yet</div>'
+      + '<p style="font-size:13px;color:var(--text-1);margin-bottom:24px;max-width:320px;margin-left:auto;margin-right:auto">Browse available plans and subscribe to get started. Your subscriptions will appear here.</p>'
+      + '<button class="btn-primary" onclick="showPage(\'browse\')">Explore Plans &rarr;</button>'
+      + '</div>';
+    return;
+  }
+
+  // Connected and has subscriptions — render each card
   var cards = USER_SUBS.map(function(sub) {
     var plan        = PLANS.find(function(p){return p.id===sub.planId;});
     var color       = plan ? plan.color : 'var(--cyan)';
@@ -2098,14 +2130,16 @@ function renderDSubs() {
     var badgeMap    = {active:'badge-active',paused:'badge-paused',overdue:'badge-overdue',suspended:'badge-suspended',cancelled:'badge-cancelled'};
     var badgeCls    = badgeMap[sub.status] || 'badge-inactive';
 
-    var retryHtml  = sub.retryCount > 0
+    var retryHtml = sub.retryCount > 0
       ? '<div class="retry-bar">&#9201; <div><strong>Retry '+sub.retryCount+'/3 scheduled</strong> &mdash; Next attempt: '+sub.nextRetryAt+'</div></div>'
       : '';
-    var graceHtml  = sub.gracePeriodEnd
+    var graceHtml = sub.gracePeriodEnd
       ? '<div class="grace-bar">&#9888;&#65039; <div><strong>Grace period active</strong> &mdash; Suspends after '+sub.gracePeriodEnd+'</div></div>'
       : '';
-    var usageHtml  = sub.usageThisMonth > 0
-      ? '<div style="background:var(--cyan-dim);border:1px solid rgba(56,200,240,.2);border-radius:var(--r-md);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--cyan);display:flex;justify-content:space-between"><span>&#128202; Usage: '+sub.usageThisMonth+' API calls</span><span>+$'+(sub.usageThisMonth*sub.usagePricePerUnit).toFixed(2)+' USDC</span></div>'
+    var usageHtml = (sub.usageThisMonth||0) > 0
+      ? '<div style="background:var(--cyan-dim);border:1px solid rgba(56,200,240,.2);border-radius:var(--r-md);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--cyan);display:flex;justify-content:space-between">'
+        + '<span>&#128202; Usage: '+sub.usageThisMonth+' API calls</span>'
+        + '<span>+$'+((sub.usageThisMonth||0)*(sub.usagePricePerUnit||0)).toFixed(2)+' USDC</span></div>'
       : '';
 
     var tlItems = [
@@ -2115,17 +2149,17 @@ function renderDSubs() {
       ['Next',     sub.next,                    isOverdue?'var(--gold)':'var(--text-0)'],
       ['Payments', String(sub.payments),         'var(--green)']
     ];
-    var tlHtml = tlItems.map(function(item) {
+    var tlHtml = tlItems.map(function(item){
       return '<div class="sub-tl-item"><div class="sub-tl-label">'+item[0]+'</div><div class="sub-tl-val" style="color:'+item[2]+'">'+item[1]+'</div></div>';
     }).join('');
 
     var btnHtml = '';
     if(!isCancelled) {
-      if(sub.status==='active')   btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Pay Next Cycle</button>';
-      if(isOverdue||isPaused)     btnHtml += '<button class="btn-primary" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Retry Payment &rarr;</button>';
-      if(sub.status==='active')   btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="openChangePlanModal('+sub.id+')">&#128260; Change Plan</button>';
-      if(sub.status==='active')   btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="pauseSubDemo('+sub.id+')">&#9208; Pause</button>';
-      if(isPaused)                btnHtml += '<button class="btn-primary" style="font-size:12px" onclick="resumeSubDemo('+sub.id+')">&#9654; Resume</button>';
+      if(sub.status==='active') btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Pay Next Cycle</button>';
+      if(isOverdue||isPaused)   btnHtml += '<button class="btn-primary" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Retry Payment &rarr;</button>';
+      if(sub.status==='active') btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="openChangePlanModal('+sub.id+')">&#128260; Change Plan</button>';
+      if(sub.status==='active') btnHtml += '<button class="btn-ghost" style="font-size:12px" onclick="pauseSubDemo('+sub.id+')">&#9208; Pause</button>';
+      if(isPaused)              btnHtml += '<button class="btn-primary" style="font-size:12px" onclick="resumeSubDemo('+sub.id+')">&#9654; Resume</button>';
       btnHtml += '<button class="btn-danger" style="font-size:12px" onclick="openChargeModal('+sub.id+')">Cancel</button>';
     } else {
       btnHtml = '<div style="font-family:var(--font-m);font-size:11px;color:var(--text-2)">Subscription cancelled.</div>';
@@ -2144,11 +2178,12 @@ function renderDSubs() {
 
   el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px">'
     + '<div><h1 style="font-family:var(--font-d);font-weight:700;font-size:26px;letter-spacing:-.5px;margin-bottom:4px">My Subscriptions</h1>'
-    + '<p style="font-size:13px;color:var(--text-1)">Manage your plans on Arc</p></div>'
-    + '<button class="btn-secondary" onclick="showPage(\'browse\')">+ Find Plans</button></div>'
+    + '<p style="font-size:13px;color:var(--text-1)">Manage your active plans on Arc</p></div>'
+    + '<button class="btn-secondary" onclick="showPage(\'browse\')">+ Browse Plans</button></div>'
     + statsHtml
     + '<div style="display:flex;flex-direction:column;gap:16px">'+cards+'</div>';
 }
+
 
 // ── Usage tab ─────────────────────────────────────────────────
 function renderUsageTab() {
